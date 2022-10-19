@@ -5,9 +5,7 @@ Note:
 1. We use direct summation for the F_calc
 2. Now we only include f_0, no f' or f'', so no anomalous scattering
 
-Written in Tensorflow 2.0
-
-May, 2021
+Written in PyTorch
 '''
 
 __author__ = "Minhuan Li"
@@ -24,133 +22,6 @@ from .mask import reciprocal_grid, rsgrid2realmask, realmask2Fmask
 from .utils import try_gpu, DWF_aniso, DWF_iso, diff_array, asu2HKL
 from .utils import vdw_rad_tensor, unitcell_grid_center
 from .packingscore import packingscore_voxelgrid_tf
-
-
-def F_protein(HKL_array, dr2_array, fullsf_tensor, reciprocal_cell_paras,
-              R_G_tensor_stack,
-              T_G_tensor_stack,
-              atom_pos_frac,
-              atom_b_iso,
-              atom_b_aniso,
-              atom_occ,
-              NO_Bfactor=False):
-    '''
-    Calculate Protein Structural Factor from an atomic model
-
-    atom_pos_frac: 2D tensor, [N_atom, N_dim=3]
-    '''
-    # F_calc = sum_Gsum_j{ [f0_sj*DWF*exp(2*pi*i*(h,k,l)*(R_G*(x1,x2,x3)+T_G))]} fractional postion, Rupp's Book P279
-    # G is symmetry operations of the spacegroup and j is the atoms
-    # DWF is the Debye-Waller Factor, has isotropic and anisotropic version, based on the PDB file input, Rupp's Book P641
-    HKL_tensor = tf.constant(HKL_array, dtype=tf.float32)
-    F_calc = 0
-
-    if NO_Bfactor:
-        magnitude = fullsf_tensor * atom_occ[..., None]  # [N_atom, N_HKLs]
-    else:
-        # DWF calculator
-        dwf_iso = DWF_iso(atom_b_iso, dr2_array)
-        dwf_aniso = DWF_aniso(atom_b_aniso, reciprocal_cell_paras, HKL_array)
-        # Some atoms do not have Anisotropic U
-        mask_vec = tf.reduce_all(
-            atom_b_aniso == tf.convert_to_tensor([0.]*6), axis=-1)
-        mask_indice = tf.reshape(tf.where(mask_vec), [-1])
-        dwf_all = tf.tensor_scatter_nd_update(
-            dwf_aniso, mask_indice[..., None], dwf_iso[mask_vec])  # [N_atoms, N_HKLs]
-
-        # Apply Atomic Structure Factor and Occupancy for magnitude
-        magnitude = dwf_all * fullsf_tensor * \
-            atom_occ[..., None]  # [N_atoms, N_HKLs]
-
-    # Vectorized phase calculation
-    sym_oped_pos_frac = tf.transpose(tf.tensordot(R_G_tensor_stack, tf.transpose(
-        atom_pos_frac), 1), perm=[2, 0, 1]) + T_G_tensor_stack  # Shape [N_atom, N_op, N_dim=3]
-    cos_phase = 0.
-    sin_phase = 0.
-    # Loop through symmetry operations instead of fully vectorization, to reduce the memory cost
-    for i in range(len(sym_oped_pos_frac[0])):
-        phase_G = 2*tf.constant(np.pi)*tf.tensordot(HKL_tensor,
-                                                    tf.transpose(sym_oped_pos_frac[:, i, :]), 1)
-        cos_phase += tf.cos(phase_G)
-        sin_phase += tf.sin(phase_G)  # Shape [N_HKLs, N_atoms]
-
-    # Calcualte the complex structural factor
-    magnitude_T = tf.transpose(magnitude)
-    F_calc = tf.complex(tf.reduce_sum(cos_phase*magnitude_T, axis=-1),
-                        tf.reduce_sum(sin_phase*magnitude_T, axis=-1))
-
-    return F_calc
-
-
-def F_protein_batch(HKL_array, dr2_array, fullsf_tensor, reciprocal_cell_paras,
-                    R_G_tensor_stack,
-                    T_G_tensor_stack,
-                    atom_pos_frac_batch,
-                    atom_b_iso,
-                    atom_b_aniso,
-                    atom_occ,
-                    NO_Bfactor=False,
-                    PARTITION=20):
-    '''
-    Calculate Protein Structural Factor from a batch of atomic models
-
-    atom_pos_frac_batch: 3D tensor, [N_batch, N_atoms, N_dim=3]
-
-    TODO: Support batched B factors
-    '''
-    # F_calc = sum_Gsum_j{ [f0_sj*DWF*exp(2*pi*i*(h,k,l)*(R_G*(x1,x2,x3)+T_G))]} fractional postion, Rupp's Book P279
-    # G is symmetry operations of the spacegroup and j is the atoms
-    # DWF is the Debye-Waller Factor, has isotropic and anisotropic version, based on the PDB file input, Rupp's Book P641
-
-    HKL_tensor = tf.constant(HKL_array, dtype=tf.float32)
-    batchsize = tf.shape(atom_pos_frac_batch)[0]
-
-    if NO_Bfactor:
-        magnitude = fullsf_tensor * atom_occ[..., None]  # [N_atom, N_HKLs]
-    else:
-        # DWF calculator
-        dwf_iso = DWF_iso(atom_b_iso, dr2_array)
-        dwf_aniso = DWF_aniso(atom_b_aniso, reciprocal_cell_paras, HKL_array)
-        # Some atoms do not have Anisotropic U
-        mask_vec = tf.reduce_all(
-            atom_b_aniso == tf.convert_to_tensor([0.]*6), axis=-1)
-        mask_indice = tf.reshape(tf.where(mask_vec), [-1])
-        dwf_all = tf.tensor_scatter_nd_update(
-            dwf_aniso, mask_indice[..., None], dwf_iso[mask_vec])  # [N_atoms, N_HKLs]
-
-        # Apply Atomic Structure Factor and Occupancy for magnitude
-        magnitude = dwf_all * fullsf_tensor * \
-            atom_occ[..., None]  # [N_atoms, N_HKLs]
-
-    # Vectorized phase calculation
-    sym_oped_pos_frac = tf.tensordot(atom_pos_frac_batch, tf.transpose(R_G_tensor_stack, [
-                                     2, 1, 0]), 1) + tf.transpose(T_G_tensor_stack)  # Shape [N_batch, N_atom, N_dim=3, N_ops]
-
-    N_ops = tf.shape(R_G_tensor_stack)[0]
-    N_partition = batchsize // PARTITION + 1
-    F_calc = 0.
-    for j in range(N_partition):
-        Fcalc_j = 0.
-        if j*PARTITION >= batchsize:
-            continue
-        start = j*PARTITION
-        end = min((j+1)*PARTITION, batchsize)
-        for i in range(N_ops):  # Loop through symmetry operations to reduce memory cost
-            phase_ij = 2 * tf.constant(np.pi) * tf.tensordot(sym_oped_pos_frac[start:end, :, :, i], tf.transpose(
-                HKL_tensor), 1)  # Shape [PARTITION, N_atoms, N_HKLs]
-            Fcalc_ij = tf.complex(tf.reduce_sum(tf.cos(phase_ij)*magnitude, axis=1),
-                                  tf.reduce_sum(tf.sin(phase_ij)*magnitude, axis=1))  # Shape [PARTITION, N_HKLs], sum over atoms
-            # Shape [PARTITION, N_HKLs], sum over symmetry operations
-            Fcalc_j += Fcalc_ij
-        if j == 0:
-            F_calc = Fcalc_j
-        else:
-            # Shape [N_batches, N_HKLs]
-            F_calc = tf.concat([F_calc, Fcalc_j], 0)
-
-    return F_calc
-
-# TODO: currently you can't change the atom name, number and order given by the reference PDB
 
 
 class SFcalculator(object):
@@ -279,23 +150,22 @@ class SFcalculator(object):
         self.atom_b_iso = torch.tensor(self.atom_b_iso, device=try_gpu()).type(torch.float32)
         self.atom_occ = torch.tensor(self.atom_occ, device=try_gpu()).type(torch.float32)
         self.n_atoms = len(self.atom_name)
-
         self.unique_atom = list(set(self.atom_name))
-        self.orth2frac_tensor = tf.constant(
-            self.unit_cell.fractionalization_matrix.tolist())
-        self.frac2orth_tensor = tf.constant(
-            self.unit_cell.orthogonalization_matrix.tolist())
+
+        self.orth2frac_tensor = torch.tensor(
+            self.unit_cell.fractionalization_matrix.tolist(), device=try_gpu()).type(torch.float32)
+        self.frac2orth_tensor = torch.tensor(
+            self.unit_cell.orthogonalization_matrix.tolist(), device=try_gpu()).type(torch.float32)
 
         # A dictionary of atomic structural factor f0_sj of different atom types at different HKL Rupp's Book P280
         # f0_sj = [sum_{i=1}^4 {a_ij*exp(-b_ij* d*^2/4)} ] + c_j
         self.full_atomic_sf_asu = {}
         for atom_type in self.unique_atom:
             element = gemmi.Element(atom_type)
-            self.full_atomic_sf_asu[atom_type] = tf.constant([
-                element.it92.calculate_sf(dr2/4.) for dr2 in self.dr2asu_array], dtype=tf.float32)
-        self.fullsf_tensor = tf.convert_to_tensor(
-            [self.full_atomic_sf_asu[atom] for atom in self.atom_name])
-
+            self.full_atomic_sf_asu[atom_type] = torch.tensor([
+                element.it92.calculate_sf(dr2/4.) for dr2 in self.dr2asu_array], device=try_gpu()).type(torch.float32)
+        self.fullsf_tensor = torch.tensor([
+            self.full_atomic_sf_asu[atom] for atom in self.atom_name], device=try_gpu()).type(torch.float32)
         self.inspected = False
 
     def set_experiment(self, exp_mtz):
@@ -328,8 +198,9 @@ class SFcalculator(object):
         uc_grid_orth_tensor = unitcell_grid_center(self.unit_cell,
                                                    spacing=4.5,
                                                    return_tensor=True)
+        # TODO: This function need to be changed
         occupancy, _ = packingscore_voxelgrid_tf(
-            self.atom_pos_orth, self.unit_cell, self.space_group, vdw_rad, uc_grid_orth_tensor)
+            self.atom_pos_orth, self.unit_cell, self.space_group, vdw_rad, uc_grid_orth_tensor) 
         self.solventpct = np.round(100 - occupancy.numpy()*100, 0)
 
         # grid size
@@ -379,13 +250,13 @@ class SFcalculator(object):
         -------
         None (Print=False) or Fprotein (Print=True)
         '''
-        # Read and tensorfy necessary inforamtion
+        # Read and tensor-fy necessary inforamtion
         if not atoms_position_tensor is None:
             assert len(
                 atoms_position_tensor) == self.n_atoms, "Atoms in atoms_positions_tensor should be consistent with atom names in PDB model!"
             # TODO Test the following line with non-orthogonal unit cell, check if we need a transpose at the transform matrix
-            self.atom_pos_frac = tf.tensordot(
-                atoms_position_tensor, tf.transpose(self.orth2frac_tensor), 1)
+            self.atom_pos_frac = torch.tensordot(
+                atoms_position_tensor, self.orth2frac_tensor.T, 1)
 
         if not atoms_baniso_tensor is None:
             assert len(atoms_baniso_tensor) == len(
@@ -410,8 +281,7 @@ class SFcalculator(object):
                                       self.atom_b_iso, self.atom_b_aniso, self.atom_occ,
                                       NO_Bfactor=NO_Bfactor)
         if not self.HKL_array is None:
-            self.Fprotein_HKL = tf.gather(
-                self.Fprotein_asu, self.asu2HKL_index)
+            self.Fprotein_HKL = self.Fprotein_asu[self.asu2HKL_index]
             if Print:
                 return self.Fprotein_HKL
         else:
@@ -637,3 +507,128 @@ class SFcalculator(object):
         dataset["FMODEL_COMPLEX"] = F_out.numpy()
         dataset.set_index(["H", "K", "L"], inplace=True)
         return dataset
+
+
+def F_protein(HKL_array, dr2_array, fullsf_tensor, reciprocal_cell_paras,
+              R_G_tensor_stack,
+              T_G_tensor_stack,
+              atom_pos_frac,
+              atom_b_iso,
+              atom_b_aniso,
+              atom_occ,
+              NO_Bfactor=False):
+    '''
+    Calculate Protein Structural Factor from an atomic model
+
+    atom_pos_frac: 2D tensor, [N_atom, N_dim=3]
+    '''
+    # F_calc = sum_Gsum_j{ [f0_sj*DWF*exp(2*pi*i*(h,k,l)*(R_G*(x1,x2,x3)+T_G))]} fractional postion, Rupp's Book P279
+    # G is symmetry operations of the spacegroup and j is the atoms
+    # DWF is the Debye-Waller Factor, has isotropic and anisotropic version, based on the PDB file input, Rupp's Book P641
+    HKL_tensor = tf.constant(HKL_array, dtype=tf.float32)
+    F_calc = 0
+
+    if NO_Bfactor:
+        magnitude = fullsf_tensor * atom_occ[..., None]  # [N_atom, N_HKLs]
+    else:
+        # DWF calculator
+        dwf_iso = DWF_iso(atom_b_iso, dr2_array)
+        dwf_aniso = DWF_aniso(atom_b_aniso, reciprocal_cell_paras, HKL_array)
+        # Some atoms do not have Anisotropic U
+        mask_vec = tf.reduce_all(
+            atom_b_aniso == tf.convert_to_tensor([0.]*6), axis=-1)
+        mask_indice = tf.reshape(tf.where(mask_vec), [-1])
+        dwf_all = tf.tensor_scatter_nd_update(
+            dwf_aniso, mask_indice[..., None], dwf_iso[mask_vec])  # [N_atoms, N_HKLs]
+
+        # Apply Atomic Structure Factor and Occupancy for magnitude
+        magnitude = dwf_all * fullsf_tensor * \
+            atom_occ[..., None]  # [N_atoms, N_HKLs]
+
+    # Vectorized phase calculation
+    sym_oped_pos_frac = tf.transpose(tf.tensordot(R_G_tensor_stack, tf.transpose(
+        atom_pos_frac), 1), perm=[2, 0, 1]) + T_G_tensor_stack  # Shape [N_atom, N_op, N_dim=3]
+    cos_phase = 0.
+    sin_phase = 0.
+    # Loop through symmetry operations instead of fully vectorization, to reduce the memory cost
+    for i in range(len(sym_oped_pos_frac[0])):
+        phase_G = 2*tf.constant(np.pi)*tf.tensordot(HKL_tensor,
+                                                    tf.transpose(sym_oped_pos_frac[:, i, :]), 1)
+        cos_phase += tf.cos(phase_G)
+        sin_phase += tf.sin(phase_G)  # Shape [N_HKLs, N_atoms]
+
+    # Calcualte the complex structural factor
+    magnitude_T = tf.transpose(magnitude)
+    F_calc = tf.complex(tf.reduce_sum(cos_phase*magnitude_T, axis=-1),
+                        tf.reduce_sum(sin_phase*magnitude_T, axis=-1))
+
+    return F_calc
+
+
+def F_protein_batch(HKL_array, dr2_array, fullsf_tensor, reciprocal_cell_paras,
+                    R_G_tensor_stack,
+                    T_G_tensor_stack,
+                    atom_pos_frac_batch,
+                    atom_b_iso,
+                    atom_b_aniso,
+                    atom_occ,
+                    NO_Bfactor=False,
+                    PARTITION=20):
+    '''
+    Calculate Protein Structural Factor from a batch of atomic models
+
+    atom_pos_frac_batch: 3D tensor, [N_batch, N_atoms, N_dim=3]
+
+    TODO: Support batched B factors
+    '''
+    # F_calc = sum_Gsum_j{ [f0_sj*DWF*exp(2*pi*i*(h,k,l)*(R_G*(x1,x2,x3)+T_G))]} fractional postion, Rupp's Book P279
+    # G is symmetry operations of the spacegroup and j is the atoms
+    # DWF is the Debye-Waller Factor, has isotropic and anisotropic version, based on the PDB file input, Rupp's Book P641
+
+    HKL_tensor = tf.constant(HKL_array, dtype=tf.float32)
+    batchsize = tf.shape(atom_pos_frac_batch)[0]
+
+    if NO_Bfactor:
+        magnitude = fullsf_tensor * atom_occ[..., None]  # [N_atom, N_HKLs]
+    else:
+        # DWF calculator
+        dwf_iso = DWF_iso(atom_b_iso, dr2_array)
+        dwf_aniso = DWF_aniso(atom_b_aniso, reciprocal_cell_paras, HKL_array)
+        # Some atoms do not have Anisotropic U
+        mask_vec = tf.reduce_all(
+            atom_b_aniso == tf.convert_to_tensor([0.]*6), axis=-1)
+        mask_indice = tf.reshape(tf.where(mask_vec), [-1])
+        dwf_all = tf.tensor_scatter_nd_update(
+            dwf_aniso, mask_indice[..., None], dwf_iso[mask_vec])  # [N_atoms, N_HKLs]
+
+        # Apply Atomic Structure Factor and Occupancy for magnitude
+        magnitude = dwf_all * fullsf_tensor * \
+            atom_occ[..., None]  # [N_atoms, N_HKLs]
+
+    # Vectorized phase calculation
+    sym_oped_pos_frac = tf.tensordot(atom_pos_frac_batch, tf.transpose(R_G_tensor_stack, [
+                                     2, 1, 0]), 1) + tf.transpose(T_G_tensor_stack)  # Shape [N_batch, N_atom, N_dim=3, N_ops]
+
+    N_ops = tf.shape(R_G_tensor_stack)[0]
+    N_partition = batchsize // PARTITION + 1
+    F_calc = 0.
+    for j in range(N_partition):
+        Fcalc_j = 0.
+        if j*PARTITION >= batchsize:
+            continue
+        start = j*PARTITION
+        end = min((j+1)*PARTITION, batchsize)
+        for i in range(N_ops):  # Loop through symmetry operations to reduce memory cost
+            phase_ij = 2 * tf.constant(np.pi) * tf.tensordot(sym_oped_pos_frac[start:end, :, :, i], tf.transpose(
+                HKL_tensor), 1)  # Shape [PARTITION, N_atoms, N_HKLs]
+            Fcalc_ij = tf.complex(tf.reduce_sum(tf.cos(phase_ij)*magnitude, axis=1),
+                                  tf.reduce_sum(tf.sin(phase_ij)*magnitude, axis=1))  # Shape [PARTITION, N_HKLs], sum over atoms
+            # Shape [PARTITION, N_HKLs], sum over symmetry operations
+            Fcalc_j += Fcalc_ij
+        if j == 0:
+            F_calc = Fcalc_j
+        else:
+            # Shape [N_batches, N_HKLs]
+            F_calc = tf.concat([F_calc, Fcalc_j], 0)
+
+    return F_calc
