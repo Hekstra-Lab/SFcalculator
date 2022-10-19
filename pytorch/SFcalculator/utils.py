@@ -1,3 +1,4 @@
+from zmq import device
 import torch
 import numpy as np
 import gemmi
@@ -88,7 +89,8 @@ def DWF_iso(b_iso, dr2_array):
     -------
     A 2D [N_atoms, N_HKLs] float32 tensor with DWF corresponding to different atoms and different HKLs
     '''
-    return torch.exp(-b_iso.view([-1, 1])*dr2_array/4.).type(torch.float32)
+    dr2_tensor = torch.tensor(dr2_array, device=try_gpu())
+    return torch.exp(-b_iso.view([-1, 1])*dr2_tensor/4.).type(torch.float32)
 
 
 def DWF_aniso(b_aniso, reciprocal_cell_paras, HKL_array):
@@ -123,7 +125,8 @@ def DWF_aniso(b_aniso, reciprocal_cell_paras, HKL_array):
                                  h*k*ar*br*cos_gammar
                                  + 2*b_aniso[:, 4][:, None]*h*l*ar*cr*cos_betar
                                  + 2*b_aniso[:, 5][:, None]*k*l*br*cr*cos_alphar)
-    DWF_aniso_vec = torch.exp(log_value)
+    log_value_tensor = torch.tensor(log_value, device=try_gpu())
+    DWF_aniso_vec = torch.exp(log_value_tensor)
     return DWF_aniso_vec.type(torch.float32)
 
 def vdw_rad_tensor(atom_name_list):
@@ -206,3 +209,13 @@ def unitcell_grid_center(unitcell, spacing=4.5, frac=False, return_tensor=True):
         return torch.tensor(result)
     else:
         return result
+
+def try_gpu(i=0):  
+    if torch.cuda.device_count() >= i + 1:
+        return torch.device(f'cuda:{i}')
+    return torch.device('cpu')
+
+def try_all_gpus(): 
+    devices = [torch.device(f'cuda:{i}')
+             for i in range(torch.cuda.device_count())]
+    return devices if devices else [torch.device('cpu')]
