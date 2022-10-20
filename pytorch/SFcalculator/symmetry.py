@@ -3,6 +3,8 @@ import torch
 import reciprocalspaceship as rs
 import pandas as pd
 
+from .utils import try_gpu
+
 ccp4_hkl_asu = [
     0, 0, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,  2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
     2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 3, 3, 3, 3,
@@ -69,14 +71,12 @@ def expand_to_p1(spacegroup, Hasu_array, Fasu_tensor, dmin_mask=6, Batch=False, 
         assert Fasu_tensor.dim() == 1, "Give single Fasu if you set Batch=False!"
         concat_axis = 0
     if dmin_mask is not None:
-        # NEW CODE: expands to p1 with resolution set by dmin_mask, to remove high-frequency noise.
-        # calculates d array using gemmi, then excludes hkl's that correspond to resolutions above dmin_mask
-        dHKL = unitcell.calculate_d_array(Hasu_array).astype("float32")
+        # expands to p1 with resolution set by dmin_mask, to remove high-frequency noise.
+        dHKL = unitcell.calculate_d_array(Hasu_array).astype("float32") # type: ignore
         new_hkl_inds_bool = (dHKL >= dmin_mask)
         Hasu_array = Hasu_array[new_hkl_inds_bool]
 
-        # NEW CODE: removes entries of Fasu_tensor that correspond to resolutions above dmin_mask
-        # I am here!
+        # removes entries of Fasu_tensor that correspond to resolutions above dmin_mask
         if Batch:
             Fasu_tensor = Fasu_tensor[:,new_hkl_inds_bool]
         else: 
@@ -84,19 +84,19 @@ def expand_to_p1(spacegroup, Hasu_array, Fasu_tensor, dmin_mask=6, Batch=False, 
 
     Fp1_tensor = Fasu_tensor
     len_asu = len(Hasu_array)
-    Hasu_tensor = torch.tensor(Hasu_array).type(torch.float32).to()
+    Hasu_tensor = torch.tensor(Hasu_array, device=try_gpu()).type(torch.float32)
 
     ds = pd.DataFrame()
     ds["H"] = Hasu_array[:, 0]
     ds["K"] = Hasu_array[:, 1]
     ds["L"] = Hasu_array[:, 2]
     ds["index"] = np.arange(len_asu)
-
+    zero_tensor = torch.tensor(0.,device=try_gpu())
     for i, op in enumerate(allops):
         if i == 0:
             continue
         rot_temp = np.array(op.rot)/op.DEN
-        tran_temp = tf.constant(np.array(op.tran)/op.DEN, dtype=tf.float32)
+        tran_temp = torch.tensor(np.array(op.tran)/op.DEN, device=try_gpu()).type(torch.float32)
         H_temp = np.matmul(Hasu_array, rot_temp).astype(np.int32)
         ds_temp = pd.DataFrame()
         ds_temp["H"] = H_temp[:, 0]
@@ -104,11 +104,11 @@ def expand_to_p1(spacegroup, Hasu_array, Fasu_tensor, dmin_mask=6, Batch=False, 
         ds_temp["L"] = H_temp[:, 2]
         ds_temp["index"] = np.arange(len_asu)+len_asu*i
         # exp(-2*pi*j*h*T)
-        phaseshift_temp = tf.exp(tf.complex(
-            0., -2*np.pi*tf.tensordot(Hasu_tensor, tran_temp, axes=1)))
+        phaseshift_temp = torch.exp(torch.complex(
+            zero_tensor, -2*np.pi*torch.tensordot(Hasu_tensor, tran_temp, dims=1)))
         Fcalc_temp = Fasu_tensor * phaseshift_temp
         ds = pd.concat([ds, ds_temp])
-        Fp1_tensor = tf.concat((Fp1_tensor, Fcalc_temp), axis=concat_axis)
+        Fp1_tensor = torch.concat((Fp1_tensor, Fcalc_temp), dim=concat_axis)
 
     # Friedel Pair
     ds_friedel = ds.copy()
@@ -116,26 +116,22 @@ def expand_to_p1(spacegroup, Hasu_array, Fasu_tensor, dmin_mask=6, Batch=False, 
     ds_friedel["K"] = -ds_friedel["K"]
     ds_friedel["L"] = -ds_friedel["L"]
     ds_friedel["index"] = ds_friedel["index"] + len(ds)
-    F_friedel_tensor = tf.math.conj(Fp1_tensor)
+    F_friedel_tensor = torch.conj(Fp1_tensor)
 
     # Combine
     ds = pd.concat([ds, ds_friedel])
-    Fp1_tensor = tf.concat((Fp1_tensor, F_friedel_tensor), axis=concat_axis)
+    Fp1_tensor = torch.concat((Fp1_tensor, F_friedel_tensor), dim=concat_axis)
 
     ds = ds.drop_duplicates(subset=["H", "K", "L"])
 
     HKL_1 = ds[["H", "K", "L"]].values
-    idx_1 = tf.constant(ds["index"].values, dtype=tf.int32)
-    Fp1_tensor = tf.gather(Fp1_tensor, idx_1, axis=concat_axis)
+    idx_1 = torch.tensor(ds["index"].values, device=try_gpu())
+    Fp1_tensor = torch.index_select(Fp1_tensor, dim=concat_axis, index=idx_1)
     in_asu = asu_cases[0]  # p1 symmetry
     idx_2 = in_asu(*HKL_1.T)
     HKL_2 = HKL_1[idx_2]
-
-    if Batch:
-        idx_2i = tf.reshape(tf.where(idx_2), [-1])
-        Fp1_tensor = tf.gather(Fp1_tensor, idx_2i, axis=concat_axis)
-    else:
-        Fp1_tensor = Fp1_tensor[idx_2]
+    idx_2i = torch.where(torch.tensor(idx_2, device=try_gpu()))[0]
+    Fp1_tensor = torch.index_select(Fp1_tensor, dim=concat_axis, index=idx_2i)
 
     return HKL_2, Fp1_tensor
 
@@ -164,11 +160,11 @@ def generate_reciprocal_asu(cell, spacegroup, dmin, anomalous=False):
     """
     p1_hkl = generate_reciprocal_cell(cell, dmin)
     # Remove absences
-    hkl = p1_hkl[~rs.utils.is_absent(p1_hkl, spacegroup)]
+    hkl = p1_hkl[~rs.utils.is_absent(p1_hkl, spacegroup)] #type: ignore
     # Map to ASU
-    hasu = hkl[rs.utils.in_asu(hkl, spacegroup)]
+    hasu = hkl[rs.utils.in_asu(hkl, spacegroup)] #type: ignore
     if anomalous:
-        hasu_minus = -hasu[~rs.utils.is_centric(hasu, spacegroup)]
+        hasu_minus = -hasu[~rs.utils.is_centric(hasu, spacegroup)] #type: ignore
         return np.unique(np.concatenate([hasu, hasu_minus]), axis=0)
     return np.unique(hasu, axis=0)
 
