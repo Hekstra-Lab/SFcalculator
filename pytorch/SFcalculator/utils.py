@@ -116,7 +116,8 @@ def DWF_aniso(b_aniso, reciprocal_cell_paras, HKL_array):
     A 2D [N_atoms, N_HKLs] float32 tensor with DWF corresponding to different atoms and different HKLs
     '''
     # U11, U22, U33, U12, U13, U23 = b_aniso
-    h, k, l = HKL_array.T
+    HKL_tensor = torch.tensor(HKL_array, device=try_gpu())
+    h, k, l = HKL_tensor.T
     ar, br, cr, cos_alphar, cos_betar, cos_gammar = reciprocal_cell_paras
     log_value = -2 * np.pi**2 * (b_aniso[:, 0][:, None] * h**2 * ar**2
                                  + b_aniso[:, 1][:, None] * k**2 * br**2
@@ -125,8 +126,7 @@ def DWF_aniso(b_aniso, reciprocal_cell_paras, HKL_array):
                                  h*k*ar*br*cos_gammar
                                  + 2*b_aniso[:, 4][:, None]*h*l*ar*cr*cos_betar
                                  + 2*b_aniso[:, 5][:, None]*k*l*br*cr*cos_alphar)
-    log_value_tensor = torch.tensor(log_value, device=try_gpu())
-    DWF_aniso_vec = torch.exp(log_value_tensor)
+    DWF_aniso_vec = torch.exp(log_value)
     return DWF_aniso_vec.type(torch.float32)
 
 def vdw_rad_tensor(atom_name_list):
