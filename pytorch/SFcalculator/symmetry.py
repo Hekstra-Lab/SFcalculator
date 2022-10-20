@@ -29,7 +29,7 @@ asu_cases = {
     9: lambda h, k, l: (k >= l) & (l >= h) & (h >= 0),
 }
 
-def expand_to_p1(spacegroup, Hasu_array, Fasu_tensor, dmin_mask=6, Batch=False, unitcell=None):
+def expand_to_p1(spacegroup, Hasu_array, Fasu_tensor, dmin_mask=6.0, Batch=False, unitcell=None):
     '''
     Expand the reciprocal ASU array to a complete p1 unit cell, with phase shift on the Complex Structure Factor
     In a fully differentiable manner (to Fasu_tensor), with tensorflow
