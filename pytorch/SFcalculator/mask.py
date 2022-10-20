@@ -1,42 +1,39 @@
-import tensorflow as tf
-import tensorflow_probability as tfp
-from .utils import to_pos_idx
+import torch
+from .utils import try_gpu
 
 def reciprocal_grid(Hp1_array, Fp1_tensor, gridsize, batchsize=None):
     '''
     Construct a reciprocal grid in reciprocal unit cell with HKL array and Structural Factor tensor
-    Fully differentiable with tensorflow. It is stupid that tensorflow doesn't support dynamic assignment
+    Fully differentiable with torch
 
     Parameters
     ----------
     Hp1_array: np.int32 array
         The HKL list in the p1 unit cell. Usually the output of expand_to_p1
 
-    Fp1_tensor: tf.complex64 tensor
+    Fp1_tensor: torch.complex64 tensor
         Corresponding structural factor tensor. Usually the output of expand_to_p1
 
     gridsize: array-like, int
         The size of the grid you want to create, the only requirement is "big enough"
 
     Return:
-    Reciprocal space unit cell grid, as a tf.complex64 tensor
+    Reciprocal space unit cell grid, as a torch.complex64 tensor
     '''
-    grid = tf.zeros(gridsize, dtype=tf.complex64)
-    postive_index = to_pos_idx(Hp1_array, grid)
-
+    grid = torch.zeros(gridsize, device=try_gpu(), dtype=torch.complex64)
+    tuple_index = tuple(torch.tensor(Hp1_array.T, device=try_gpu(), dtype=int)) #type: ignore
     if batchsize is not None:
         for i in range(batchsize):
             Fp1_tensor_i = Fp1_tensor[i]
-            grid_i = tf.tensor_scatter_nd_update(
-                grid, postive_index, Fp1_tensor_i)  # Reciprocal Grid of model i
+            grid_i = grid.clone()  
+            grid_i[tuple_index] = Fp1_tensor_i # Reciprocal Grid of model i
             if i == 0:
                 grid_batch = grid_i[None, ...]
             else:
-                grid_batch = tf.concat((grid_batch, grid_i[None, ...]), axis=0)
-        return grid_batch
-
+                grid_batch = torch.concat((grid_batch, grid_i[None, ...]), dim=0) #type: ignore
+        return grid_batch #type: ignore
     else:
-        grid = tf.tensor_scatter_nd_update(grid, postive_index, Fp1_tensor)
+        grid[tuple_index] = Fp1_tensor
         return grid
 
 

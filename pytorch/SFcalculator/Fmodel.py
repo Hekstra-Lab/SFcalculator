@@ -17,7 +17,7 @@ from zmq import device
 import torch
 import reciprocalspaceship as rs
 
-from .symmetry import generate_reciprocal_asu
+from .symmetry import generate_reciprocal_asu, expand_to_p1
 from .mask import reciprocal_grid, rsgrid2realmask, realmask2Fmask
 from .utils import try_gpu, DWF_aniso, DWF_iso, diff_array, asu2HKL
 from .utils import vdw_rad_tensor, unitcell_grid_center
@@ -162,10 +162,10 @@ class SFcalculator(object):
         self.full_atomic_sf_asu = {}
         for atom_type in self.unique_atom:
             element = gemmi.Element(atom_type)
-            self.full_atomic_sf_asu[atom_type] = torch.tensor([
-                element.it92.calculate_sf(dr2/4.) for dr2 in self.dr2asu_array], device=try_gpu()).type(torch.float32)
-        self.fullsf_tensor = torch.tensor([
-            self.full_atomic_sf_asu[atom] for atom in self.atom_name], device=try_gpu()).type(torch.float32)
+            self.full_atomic_sf_asu[atom_type] = np.array([
+                element.it92.calculate_sf(dr2/4.) for dr2 in self.dr2asu_array])
+        self.fullsf_tensor = torch.tensor(np.array([
+            self.full_atomic_sf_asu[atom] for atom in self.atom_name]), device=try_gpu()).type(torch.float32)
         self.inspected = False
 
     def set_experiment(self, exp_mtz):
@@ -323,7 +323,7 @@ class SFcalculator(object):
             dmin_mask=dmin_mask, unitcell=self.unit_cell)
         rs_grid = reciprocal_grid(Hp1_array, Fp1_tensor, gridsize)
         self.real_grid_mask = rsgrid2realmask(
-            rs_grid, solvent_percent=solventpct)
+            rs_grid, solvent_percent=solventpct) #type: ignore
         if not self.HKL_array is None:
             self.Fmask_HKL = realmask2Fmask(
                 self.real_grid_mask, self.HKL_array)
@@ -497,8 +497,7 @@ class SFcalculator(object):
         F_out_mag = tf.abs(F_out)
         PI_on_180 = 0.017453292519943295
         F_out_phase = tf.math.angle(F_out) / PI_on_180
-        dataset = rs.DataSet(
-            spacegroup=self.space_group, cell=self.unit_cell)
+        dataset = rs.DataSet(spacegroup=self.space_group, cell=self.unit_cell)
         dataset["H"] = HKL_out[:, 0]
         dataset["K"] = HKL_out[:, 1]
         dataset["L"] = HKL_out[:, 2]
@@ -525,7 +524,7 @@ def F_protein(HKL_array, dr2_array, fullsf_tensor, reciprocal_cell_paras,
     # F_calc = sum_Gsum_j{ [f0_sj*DWF*exp(2*pi*i*(h,k,l)*(R_G*(x1,x2,x3)+T_G))]} fractional postion, Rupp's Book P279
     # G is symmetry operations of the spacegroup and j is the atoms
     # DWF is the Debye-Waller Factor, has isotropic and anisotropic version, based on the PDB file input, Rupp's Book P641
-    HKL_tensor = tf.constant(HKL_array, dtype=tf.float32)
+    HKL_tensor = torch.tensor(HKL_array, dtype=torch.float32, device=try_gpu())
     F_calc = 0
 
     if NO_Bfactor:
@@ -535,33 +534,27 @@ def F_protein(HKL_array, dr2_array, fullsf_tensor, reciprocal_cell_paras,
         dwf_iso = DWF_iso(atom_b_iso, dr2_array)
         dwf_aniso = DWF_aniso(atom_b_aniso, reciprocal_cell_paras, HKL_array)
         # Some atoms do not have Anisotropic U
-        mask_vec = tf.reduce_all(
-            atom_b_aniso == tf.convert_to_tensor([0.]*6), axis=-1)
-        mask_indice = tf.reshape(tf.where(mask_vec), [-1])
-        dwf_all = tf.tensor_scatter_nd_update(
-            dwf_aniso, mask_indice[..., None], dwf_iso[mask_vec])  # [N_atoms, N_HKLs]
+        mask_vec = torch.all(atom_b_aniso == torch.tensor([0.]*6, device=try_gpu()), axis=-1)
+        dwf_all = dwf_aniso
+        dwf_all[mask_vec] = dwf_iso[mask_vec]
 
         # Apply Atomic Structure Factor and Occupancy for magnitude
         magnitude = dwf_all * fullsf_tensor * \
             atom_occ[..., None]  # [N_atoms, N_HKLs]
 
     # Vectorized phase calculation
-    sym_oped_pos_frac = tf.transpose(tf.tensordot(R_G_tensor_stack, tf.transpose(
-        atom_pos_frac), 1), perm=[2, 0, 1]) + T_G_tensor_stack  # Shape [N_atom, N_op, N_dim=3]
+    sym_oped_pos_frac = torch.permute(torch.tensordot(R_G_tensor_stack,
+        atom_pos_frac.T, 1), [2, 0, 1]) + T_G_tensor_stack  # Shape [N_atom, N_op, N_dim=3]
     cos_phase = 0.
     sin_phase = 0.
     # Loop through symmetry operations instead of fully vectorization, to reduce the memory cost
-    for i in range(len(sym_oped_pos_frac[0])):
-        phase_G = 2*tf.constant(np.pi)*tf.tensordot(HKL_tensor,
-                                                    tf.transpose(sym_oped_pos_frac[:, i, :]), 1)
-        cos_phase += tf.cos(phase_G)
-        sin_phase += tf.sin(phase_G)  # Shape [N_HKLs, N_atoms]
-
-    # Calcualte the complex structural factor
-    magnitude_T = tf.transpose(magnitude)
-    F_calc = tf.complex(tf.reduce_sum(cos_phase*magnitude_T, axis=-1),
-                        tf.reduce_sum(sin_phase*magnitude_T, axis=-1))
-
+    for i in range(sym_oped_pos_frac.size(dim=1)):
+        phase_G = 2*np.pi*torch.tensordot(HKL_tensor,sym_oped_pos_frac[:, i, :].T, 1)
+        cos_phase += torch.cos(phase_G)
+        sin_phase += torch.sin(phase_G)  # Shape [N_HKLs, N_atoms]
+    # Calcualte the complex structural factor 
+    F_calc = torch.complex(torch.sum(cos_phase*magnitude.T, dim=-1),
+                           torch.sum(sin_phase*magnitude.T, dim=-1))
     return F_calc
 
 
