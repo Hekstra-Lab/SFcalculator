@@ -37,14 +37,14 @@ def reciprocal_grid(Hp1_array, Fp1_tensor, gridsize, batchsize=None):
         return grid
 
 
-def rsgrid2realmask(rs_grid, solvent_percent=50.0, scale=50, Batch=False):
+def rsgrid2realmask(rs_grid, solvent_percent=0.50, scale=50, Batch=False):
     '''
     Convert reciprocal space grid to real space solvent mask grid, in a
-    fully differentiable way with tensorflow.
+    fully differentiable way with torch
 
     Parameters:
     -----------
-    rs_grid: tf.complex64 tensor
+    rs_grid: torch.complex64 tensor
         Reciprocal space unit cell grid. Usually the output of reciprocal_grid
 
     solvent_percent: float
@@ -58,16 +58,15 @@ def rsgrid2realmask(rs_grid, solvent_percent=50.0, scale=50, Batch=False):
     tf.float32 tensor
     The solvent mask grid in real space, solvent voxels have value close to 1, while protein voxels have value close to 0.
     '''
-    real_grid = tf.math.real(tf.signal.fft3d(rs_grid))
-    real_grid_norm = (real_grid - tf.reduce_mean(real_grid)) / \
-        tf.math.reduce_std(real_grid)
+    real_grid = torch.real(torch.fft.fftn(rs_grid))
+    real_grid_norm = (real_grid - torch.mean(real_grid)) / \
+        torch.std(real_grid)
     if Batch:
-        CUTOFF = tfp.stats.percentile(real_grid_norm[0], solvent_percent)
+        CUTOFF = torch.quantile(real_grid_norm[0], solvent_percent)
     else:
-        CUTOFF = tfp.stats.percentile(
-            real_grid_norm, solvent_percent)  # This is a little slow
+        CUTOFF = torch.quantile(real_grid_norm, solvent_percent)  # This is a little slow
 
-    real_grid_mask = tf.sigmoid((CUTOFF-real_grid_norm)*scale)
+    real_grid_mask = torch.sigmoid((CUTOFF-real_grid_norm)*50)
     return real_grid_mask
 
 
