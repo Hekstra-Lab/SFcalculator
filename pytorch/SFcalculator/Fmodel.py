@@ -373,8 +373,7 @@ class SFcalculator(object):
         '''
         # Read and tensor-fy necessary information
         # TODO Test the following line with non-orthogonal unit cell, check if we need a transpose at the transform matrix
-        atom_pos_frac_batch = tf.tensordot(atoms_position_batch, tf.transpose(
-            self.orth2frac_tensor), 1)  # [N_batch, N_atoms, N_dim=3]
+        atom_pos_frac_batch = torch.tensordot(atoms_position_batch, self.orth2frac_tensor.T, 1)  # [N_batch, N_atoms, N_dim=3]
 
         self.Fprotein_asu_batch = F_protein_batch(self.Hasu_array, self.dr2asu_array,
                                                   self.fullsf_tensor,
@@ -386,8 +385,7 @@ class SFcalculator(object):
                                                   PARTITION=PARTITION)  # [N_batch, N_Hasus]
 
         if not self.HKL_array is None:
-            self.Fprotein_HKL_batch = tf.gather(
-                self.Fprotein_asu_batch, self.asu2HKL_index, axis=-1)
+            self.Fprotein_HKL_batch = self.Fprotein_asu_batch[:, self.asu2HKL_index] #type: ignore
             if Print:
                 return self.Fprotein_HKL_batch
         else:
@@ -518,7 +516,6 @@ def F_protein(HKL_array, dr2_array, fullsf_tensor, reciprocal_cell_paras,
     # G is symmetry operations of the spacegroup and j is the atoms
     # DWF is the Debye-Waller Factor, has isotropic and anisotropic version, based on the PDB file input, Rupp's Book P641
     HKL_tensor = torch.tensor(HKL_array, dtype=torch.float32, device=try_gpu())
-    F_calc = 0
 
     if NO_Bfactor:
         magnitude = fullsf_tensor * atom_occ[..., None]  # [N_atom, N_HKLs]
@@ -570,9 +567,8 @@ def F_protein_batch(HKL_array, dr2_array, fullsf_tensor, reciprocal_cell_paras,
     # F_calc = sum_Gsum_j{ [f0_sj*DWF*exp(2*pi*i*(h,k,l)*(R_G*(x1,x2,x3)+T_G))]} fractional postion, Rupp's Book P279
     # G is symmetry operations of the spacegroup and j is the atoms
     # DWF is the Debye-Waller Factor, has isotropic and anisotropic version, based on the PDB file input, Rupp's Book P641
-
-    HKL_tensor = tf.constant(HKL_array, dtype=tf.float32)
-    batchsize = tf.shape(atom_pos_frac_batch)[0]
+    HKL_tensor = torch.tensor(HKL_array, device=try_gpu())
+    batchsize = atom_pos_frac_batch.shape[0]
 
     if NO_Bfactor:
         magnitude = fullsf_tensor * atom_occ[..., None]  # [N_atom, N_HKLs]
@@ -581,21 +577,17 @@ def F_protein_batch(HKL_array, dr2_array, fullsf_tensor, reciprocal_cell_paras,
         dwf_iso = DWF_iso(atom_b_iso, dr2_array)
         dwf_aniso = DWF_aniso(atom_b_aniso, reciprocal_cell_paras, HKL_array)
         # Some atoms do not have Anisotropic U
-        mask_vec = tf.reduce_all(
-            atom_b_aniso == tf.convert_to_tensor([0.]*6), axis=-1)
-        mask_indice = tf.reshape(tf.where(mask_vec), [-1])
-        dwf_all = tf.tensor_scatter_nd_update(
-            dwf_aniso, mask_indice[..., None], dwf_iso[mask_vec])  # [N_atoms, N_HKLs]
-
+        mask_vec = torch.all(atom_b_aniso == torch.tensor([0.]*6, device=try_gpu()), dim=-1)
+        dwf_all = dwf_aniso
+        dwf_all[mask_vec] = dwf_iso[mask_vec]
         # Apply Atomic Structure Factor and Occupancy for magnitude
         magnitude = dwf_all * fullsf_tensor * \
             atom_occ[..., None]  # [N_atoms, N_HKLs]
 
     # Vectorized phase calculation
-    sym_oped_pos_frac = tf.tensordot(atom_pos_frac_batch, tf.transpose(R_G_tensor_stack, [
-                                     2, 1, 0]), 1) + tf.transpose(T_G_tensor_stack)  # Shape [N_batch, N_atom, N_dim=3, N_ops]
-
-    N_ops = tf.shape(R_G_tensor_stack)[0]
+    sym_oped_pos_frac = torch.tensordot(atom_pos_frac_batch, torch.permute(R_G_tensor_stack, [
+                                     2, 1, 0]), 1) + T_G_tensor_stack.T  # Shape [N_batch, N_atom, N_dim=3, N_ops]
+    N_ops = R_G_tensor_stack.shape[0]
     N_partition = batchsize // PARTITION + 1
     F_calc = 0.
     for j in range(N_partition):
@@ -605,16 +597,15 @@ def F_protein_batch(HKL_array, dr2_array, fullsf_tensor, reciprocal_cell_paras,
         start = j*PARTITION
         end = min((j+1)*PARTITION, batchsize)
         for i in range(N_ops):  # Loop through symmetry operations to reduce memory cost
-            phase_ij = 2 * tf.constant(np.pi) * tf.tensordot(sym_oped_pos_frac[start:end, :, :, i], tf.transpose(
-                HKL_tensor), 1)  # Shape [PARTITION, N_atoms, N_HKLs]
-            Fcalc_ij = tf.complex(tf.reduce_sum(tf.cos(phase_ij)*magnitude, axis=1),
-                                  tf.reduce_sum(tf.sin(phase_ij)*magnitude, axis=1))  # Shape [PARTITION, N_HKLs], sum over atoms
+            phase_ij = 2 * torch.pi * torch.tensordot(sym_oped_pos_frac[start:end, :, :, i], HKL_tensor.T, 1)  # Shape [PARTITION, N_atoms, N_HKLs]
+            Fcalc_ij = torch.complex(torch.sum(torch.cos(phase_ij)*magnitude, dim=1),
+                                     torch.sum(torch.sin(phase_ij)*magnitude, dim=1))  # Shape [PARTITION, N_HKLs], sum over atoms
             # Shape [PARTITION, N_HKLs], sum over symmetry operations
             Fcalc_j += Fcalc_ij
         if j == 0:
             F_calc = Fcalc_j
         else:
             # Shape [N_batches, N_HKLs]
-            F_calc = tf.concat([F_calc, Fcalc_j], 0)
+            F_calc = torch.concat((F_calc, Fcalc_j), dim=0) #type: ignore
 
     return F_calc
