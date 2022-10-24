@@ -64,8 +64,7 @@ def rsgrid2realmask(rs_grid, solvent_percent=0.50, scale=50, Batch=False):
     if Batch:
         CUTOFF = torch.quantile(real_grid_norm[0], solvent_percent)
     else:
-        CUTOFF = torch.quantile(real_grid_norm, solvent_percent)  # This is a little slow
-
+        CUTOFF = torch.quantile(real_grid_norm, solvent_percent)
     real_grid_mask = torch.sigmoid((CUTOFF-real_grid_norm)*50)
     return real_grid_mask
 
@@ -77,7 +76,7 @@ def realmask2Fmask(real_grid_mask, H_array, batchsize=None):
 
     Parameters:
     -----------
-    real_grid_mask: tf.float32 tensor
+    real_grid_mask: torch.float32 tensor
         The solvent massk grid in real space unit cell. Usually the output of rsgrid2realmask
 
     H_array: array-like, int
@@ -85,16 +84,13 @@ def realmask2Fmask(real_grid_mask, H_array, batchsize=None):
 
     Return:
     -------
-    tf.complex64 tensor
+    torch.complex64 tensor
     Solvent mask structural factor corresponding to the HKL list in H_array
     '''
-    Fmask_grid = tf.math.conj(tf.signal.fft3d(tf.complex(real_grid_mask, 0.)))
+    Fmask_grid = torch.fft.ifftn(real_grid_mask)
+    tuple_index = tuple(torch.tensor(H_array.T, device=try_gpu(), dtype=int)) #type: ignore
     if batchsize is not None:
-        positive_index = to_pos_idx(H_array, Fmask_grid[0])
-        Fmask = tf.gather_nd(Fmask_grid, tf.repeat(
-            positive_index[None, ...], batchsize, axis=0), batch_dims=1)
+        Fmask = Fmask_grid[(slice(None), *tuple_index)]
     else:
-        positive_index = to_pos_idx(H_array, Fmask_grid)
-        Fmask = tf.gather_nd(Fmask_grid, positive_index)
-
+        Fmask = Fmask_grid[tuple_index]
     return Fmask
