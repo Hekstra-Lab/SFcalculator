@@ -58,7 +58,7 @@ def rsgrid2realmask(rs_grid, solvent_percent=0.50, scale=50, Batch=False):
     tf.float32 tensor
     The solvent mask grid in real space, solvent voxels have value close to 1, while protein voxels have value close to 0.
     '''
-    real_grid = torch.real(torch.fft.fftn(rs_grid))
+    real_grid = torch.real(torch.fft.fftn(rs_grid, dim=(-3,-2,-1)))
     real_grid_norm = (real_grid - torch.mean(real_grid)) / \
         torch.std(real_grid)
     if Batch:
@@ -87,7 +87,7 @@ def realmask2Fmask(real_grid_mask, H_array, batchsize=None):
     torch.complex64 tensor
     Solvent mask structural factor corresponding to the HKL list in H_array
     '''
-    Fmask_grid = torch.fft.ifftn(real_grid_mask)
+    Fmask_grid = torch.fft.ifftn(real_grid_mask, dim=(-3,-2,-1))
     tuple_index = tuple(torch.tensor(H_array.T, device=try_gpu(), dtype=int)) #type: ignore
     if batchsize is not None:
         Fmask = Fmask_grid[(slice(None), *tuple_index)]
