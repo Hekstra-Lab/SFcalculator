@@ -93,7 +93,7 @@ class SFcalculator(object):
             self.dHKL = self.unit_cell.calculate_d_array(self.HKL_array).astype("float32")
             self.dmin = self.dHKL.min()
             assert mtz_reference.cell == self.unit_cell, "Unit cell from mtz file does not match that in PDB file!"
-            assert mtz_reference.spacegroup.hm == self.space_group.hm, "Space group from mtz file does not match that in PDB file!"
+            assert mtz_reference.spacegroup.hm == self.space_group.hm, "Space group from mtz file does not match that in PDB file!" #type: ignore
             self.Hasu_array = generate_reciprocal_asu(
                 self.unit_cell, self.space_group, self.dmin)
             assert diff_array(self.HKL_array, self.Hasu_array) == set(
@@ -327,15 +327,15 @@ class SFcalculator(object):
         if not self.HKL_array is None:
             self.Fmask_HKL = realmask2Fmask(
                 self.real_grid_mask, self.HKL_array)
-            zero_hkl_inds = np.argwhere(self.dHKL <= dmin_nonzero)
-            self.Fmask_HKL = tf.tensor_scatter_nd_update(self.Fmask_HKL, zero_hkl_inds, tf.zeros(len(zero_hkl_inds), dtype=tf.complex64))
+            zero_hkl_bool = torch.tensor(self.dHKL <= dmin_nonzero, device=try_gpu())
+            self.Fmask_HKL[zero_hkl_bool] = torch.tensor(0., device=try_gpu(), dtype=torch.complex64)
             if Print:
                 return self.Fmask_HKL
         else:
             self.Fmask_asu = realmask2Fmask(
                 self.real_grid_mask, self.Hasu_array)
-            zero_hkl_inds = np.argwhere(self.dHasu <= dmin_nonzero)
-            self.Fmask_asu = tf.tensor_scatter_nd_update(self.Fmask_asu, zero_hkl_inds, tf.zeros(len(zero_hkl_inds), dtype=tf.complex64))
+            zero_hkl_bool = torch.tensor(self.dHasu <= dmin_nonzero, device=try_gpu())
+            self.Fmask_asu[zero_hkl_bool] = torch.tensor(0., device=try_gpu(), dtype=torch.complex64)
             if Print:
                 return self.Fmask_asu
 
@@ -534,7 +534,7 @@ def F_protein(HKL_array, dr2_array, fullsf_tensor, reciprocal_cell_paras,
         dwf_iso = DWF_iso(atom_b_iso, dr2_array)
         dwf_aniso = DWF_aniso(atom_b_aniso, reciprocal_cell_paras, HKL_array)
         # Some atoms do not have Anisotropic U
-        mask_vec = torch.all(atom_b_aniso == torch.tensor([0.]*6, device=try_gpu()), axis=-1)
+        mask_vec = torch.all(atom_b_aniso == torch.tensor([0.]*6, device=try_gpu()), dim=-1)
         dwf_all = dwf_aniso
         dwf_all[mask_vec] = dwf_iso[mask_vec]
 
