@@ -340,31 +340,24 @@ class SFcalculator(object):
                 return self.Fmask_asu
 
     def Calc_Ftotal(self, kall=None, kaniso=None, ksol=None, bsol=None):
-
         if kall is None:
-            kall = tf.constant(1.0)
+            kall = torch.tensor(1.0, device=try_gpu())
         if kaniso is None:
-            kaniso = tf.random.normal([6])
+            kaniso = torch.normal(0., 1., size=[6], device=try_gpu())
         if ksol is None:
-            ksol = tf.constant(0.35)
+            ksol = torch.tensor(0.35, device=try_gpu())
         if bsol is None:
-            bsol = tf.constant(50.0)
+            bsol = torch.tensor(50.0, device=try_gpu())
 
         if not self.HKL_array is None:
-            dr2_complex_tensor = tf.constant(
-                self.dr2HKL_array, dtype=tf.complex64)
-            scaled_Fmask = tf.complex(
-                ksol, 0.0)*self.Fmask_HKL*tf.exp(-tf.complex(bsol, 0.0)*dr2_complex_tensor/4.)
-            self.Ftotal_HKL = tf.complex(
-                kall, 0.0)*tf.complex(DWF_aniso(kaniso[None, ...], self.reciprocal_cell_paras, self.HKL_array)[0], 0.0)*(self.Fprotein_HKL+scaled_Fmask)
+            dr2_tensor = torch.tensor(self.dr2HKL_array, device=try_gpu())
+            scaled_Fmask = ksol * self.Fmask_HKL * torch.exp(-bsol * dr2_tensor/4.0)
+            self.Ftotal_HKL = kall * DWF_aniso(kaniso[None, ...], self.reciprocal_cell_paras, self.HKL_array)[0] * (self.Fprotein_HKL+scaled_Fmask)
             return self.Ftotal_HKL
         else:
-            dr2_complex_tensor = tf.constant(
-                self.dr2asu_array, dtype=tf.complex64)
-            scaled_Fmask = tf.complex(
-                ksol, 0.0)*self.Fmask_asu*tf.exp(-tf.complex(bsol, 0.0)*dr2_complex_tensor/4.)
-            self.Ftotal_asu = tf.complex(
-                kall, 0.0)*tf.complex(DWF_aniso(kaniso[None, ...], self.reciprocal_cell_paras, self.Hasu_array)[0], 0.0)*(self.Fprotein_asu+scaled_Fmask)
+            dr2_tensor = torch.tensor(self.dr2asu_array, device=try_gpu())
+            scaled_Fmask = ksol * self.Fmask_HKL * torch.exp(-bsol * dr2_tensor/4.0)
+            self.Ftotal_asu = kall * DWF_aniso(kaniso[None, ...], self.reciprocal_cell_paras, self.Hasu_array)[0] * (self.Fprotein_asu+scaled_Fmask)
             return self.Ftotal_asu
 
     def Calc_Fprotein_batch(self, atoms_position_batch, NO_Bfactor=False, Print=False, PARTITION=20):
