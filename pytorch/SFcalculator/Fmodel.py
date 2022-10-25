@@ -356,7 +356,7 @@ class SFcalculator(object):
             return self.Ftotal_HKL
         else:
             dr2_tensor = torch.tensor(self.dr2asu_array, device=try_gpu())
-            scaled_Fmask = ksol * self.Fmask_HKL * torch.exp(-bsol * dr2_tensor/4.0)
+            scaled_Fmask = ksol * self.Fmask_asu * torch.exp(-bsol * dr2_tensor/4.0)
             self.Ftotal_asu = kall * DWF_aniso(kaniso[None, ...], self.reciprocal_cell_paras, self.Hasu_array)[0] * (self.Fprotein_asu+scaled_Fmask)
             return self.Ftotal_asu
 
@@ -392,7 +392,7 @@ class SFcalculator(object):
             if Print:
                 return self.Fprotein_asu_batch
 
-    def Calc_Fsolvent_batch(self, solventpct=None, gridsize=None, dmin_mask=6, Print=False, PARTITION=100):
+    def Calc_Fsolvent_batch(self, solventpct=None, gridsize=None, dmin_mask=6, Print=False, PARTITION=100, dmin_nonzero=3.0):
         '''
         Should run after Calc_Fprotein_batch, calculate the solvent mask structure factors in batched manner
         most parameters are similar to `Calc_Fmask`
@@ -441,10 +441,10 @@ class SFcalculator(object):
             else:
                 # Shape [N_batches, N_HKLs]
                 Fmask_batch = torch.concat((Fmask_batch, Fmask_batch_j), dim=0) #type: ignore
-
+        zero_hkl_bool = torch.tensor(self.dHKL <= dmin_nonzero, device=try_gpu())
+        Fmask_batch[:, zero_hkl_bool] = torch.tensor(0., device=try_gpu(), dtype=torch.complex64) #type: ignore
         if not self.HKL_array is None:
             self.Fmask_HKL_batch = Fmask_batch
-            # TODO force high resoltuion HKL rows to be zero
             if Print:
                 return self.Fmask_HKL_batch
         else:
@@ -464,20 +464,14 @@ class SFcalculator(object):
             bsol = torch.tensor(50.0, device=try_gpu())
 
         if not self.HKL_array is None:
-            dr2_complex_tensor = tf.constant(
-                self.dr2HKL_array, dtype=tf.complex64)
-            scaled_Fmask = tf.complex(
-                ksol, 0.0)*self.Fmask_HKL_batch*tf.exp(-tf.complex(bsol, 0.0)*dr2_complex_tensor/4.)
-            self.Ftotal_HKL_batch = tf.complex(kall, 0.0)*tf.complex(DWF_aniso(
-                kaniso[None, ...], self.reciprocal_cell_paras, self.HKL_array)[0], 0.0)*(self.Fprotein_HKL_batch+scaled_Fmask)
+            dr2_tensor = torch.tensor(self.dr2HKL_array, device=try_gpu())
+            scaled_Fmask = ksol * self.Fmask_HKL_batch * torch.exp(-bsol * dr2_tensor/4.0)
+            self.Ftotal_HKL_batch = kall * DWF_aniso(kaniso[None, ...], self.reciprocal_cell_paras, self.HKL_array)[0] * (self.Fprotein_HKL_batch+scaled_Fmask)
             return self.Ftotal_HKL_batch
         else:
-            dr2_complex_tensor = tf.constant(
-                self.dr2asu_array, dtype=tf.complex64)
-            scaled_Fmask = tf.complex(
-                ksol, 0.0)*self.Fmask_asu_batch*tf.exp(-tf.complex(bsol, 0.0)*dr2_complex_tensor/4.)
-            self.Ftotal_asu_batch = tf.complex(kall, 0.0)*tf.complex(DWF_aniso(
-                kaniso[None, ...], self.reciprocal_cell_paras, self.Hasu_array)[0], 0.0)*(self.Fprotein_asu_batch+scaled_Fmask)
+            dr2_tensor = torch.tensor(self.dr2asu_array, device=try_gpu())
+            scaled_Fmask = ksol * self.Fmask_asu_batch * torch.exp(-bsol * dr2_tensor/4.0)
+            self.Ftotal_asu_batch = kall * DWF_aniso(kaniso[None, ...], self.reciprocal_cell_paras, self.Hasu_array)[0] * (self.Fprotein_asu_batch+scaled_Fmask)
             return self.Ftotal_asu_batch
 
     def prepare_DataSet(self, HKL_attr, F_attr):
@@ -485,16 +479,16 @@ class SFcalculator(object):
         HKL_out = getattr(self, HKL_attr)
         assert len(F_out) == len(
             HKL_out), "HKL and structural factor should have same length!"
-        F_out_mag = tf.abs(F_out)
+        F_out_mag = torch.abs(F_out)
         PI_on_180 = 0.017453292519943295
-        F_out_phase = tf.math.angle(F_out) / PI_on_180
-        dataset = rs.DataSet(spacegroup=self.space_group, cell=self.unit_cell)
+        F_out_phase = torch.angle(F_out) / PI_on_180
+        dataset = rs.DataSet(spacegroup=self.space_group, cell=self.unit_cell) #type: ignore
         dataset["H"] = HKL_out[:, 0]
         dataset["K"] = HKL_out[:, 1]
         dataset["L"] = HKL_out[:, 2]
-        dataset["FMODEL"] = F_out_mag.numpy()
-        dataset["PHIFMODEL"] = F_out_phase.numpy()
-        dataset["FMODEL_COMPLEX"] = F_out.numpy()
+        dataset["FMODEL"] = F_out_mag.cpu().numpy()
+        dataset["PHIFMODEL"] = F_out_phase.cpu().numpy()
+        dataset["FMODEL_COMPLEX"] = F_out.cpu().numpy()
         dataset.set_index(["H", "K", "L"], inplace=True)
         return dataset
 
