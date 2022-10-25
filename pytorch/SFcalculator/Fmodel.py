@@ -415,7 +415,7 @@ class SFcalculator(object):
             self.space_group, self.Hasu_array, self.Fprotein_asu_batch,
             dmin_mask=dmin_mask, Batch=True, unitcell=self.unit_cell)
 
-        batchsize = tf.shape(self.Fprotein_asu_batch)[0]
+        batchsize = self.Fprotein_asu_batch.shape[0] #type: ignore
         N_partition = batchsize // PARTITION + 1
         Fmask_batch = 0.
 
@@ -433,14 +433,14 @@ class SFcalculator(object):
             rs_grid = reciprocal_grid(
                 Hp1_array, Fp1_tensor_batch[start:end], gridsize, end-start)
             real_grid_mask = rsgrid2realmask(
-                rs_grid, solvent_percent=solventpct, Batch=True)
+                rs_grid, solvent_percent=solventpct, Batch=True) #type: ignore
             Fmask_batch_j = realmask2Fmask(
                 real_grid_mask, HKL_array, end-start)
             if j == 0:
                 Fmask_batch = Fmask_batch_j
             else:
                 # Shape [N_batches, N_HKLs]
-                Fmask_batch = tf.concat([Fmask_batch, Fmask_batch_j], 0)
+                Fmask_batch = torch.concat((Fmask_batch, Fmask_batch_j), dim=0) #type: ignore
 
         if not self.HKL_array is None:
             self.Fmask_HKL_batch = Fmask_batch
@@ -455,13 +455,13 @@ class SFcalculator(object):
     def Calc_Ftotal_batch(self, kall=None, kaniso=None, ksol=None, bsol=None):
 
         if kall is None:
-            kall = tf.constant(1.0)
+            kall = torch.tensor(1.0, device=try_gpu())
         if kaniso is None:
-            kaniso = tf.random.normal([6])
+            kaniso = torch.normal(0., 1., size=[6], device=try_gpu())
         if ksol is None:
-            ksol = tf.constant(0.35)
+            ksol = torch.tensor(0.35, device=try_gpu())
         if bsol is None:
-            bsol = tf.constant(50.0)
+            bsol = torch.tensor(50.0, device=try_gpu())
 
         if not self.HKL_array is None:
             dr2_complex_tensor = tf.constant(
@@ -567,7 +567,7 @@ def F_protein_batch(HKL_array, dr2_array, fullsf_tensor, reciprocal_cell_paras,
     # F_calc = sum_Gsum_j{ [f0_sj*DWF*exp(2*pi*i*(h,k,l)*(R_G*(x1,x2,x3)+T_G))]} fractional postion, Rupp's Book P279
     # G is symmetry operations of the spacegroup and j is the atoms
     # DWF is the Debye-Waller Factor, has isotropic and anisotropic version, based on the PDB file input, Rupp's Book P641
-    HKL_tensor = torch.tensor(HKL_array, device=try_gpu())
+    HKL_tensor = torch.tensor(HKL_array, device=try_gpu()).type(torch.float32)
     batchsize = atom_pos_frac_batch.shape[0]
 
     if NO_Bfactor:
@@ -607,5 +607,5 @@ def F_protein_batch(HKL_array, dr2_array, fullsf_tensor, reciprocal_cell_paras,
         else:
             # Shape [N_batches, N_HKLs]
             F_calc = torch.concat((F_calc, Fcalc_j), dim=0) #type: ignore
-
     return F_calc
+
