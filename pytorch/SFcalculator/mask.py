@@ -47,7 +47,7 @@ def rsgrid2realmask(rs_grid, solvent_percent=0.50, scale=50, Batch=False):
     rs_grid: torch.complex64 tensor
         Reciprocal space unit cell grid. Usually the output of reciprocal_grid
 
-    solvent_percent: float
+    solvent_percent: 0 - 1 float
         The approximate volume percentage of solvent in the system, to generate the cutoff
 
     scale: int/float

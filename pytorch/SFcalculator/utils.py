@@ -138,7 +138,7 @@ def vdw_rad_tensor(atom_name_list):
     for atom_type in unique_atom:
         element = gemmi.Element(atom_type)
         vdw_rad_dict[atom_type] = torch.tensor(element.vdw_r)
-    vdw_rad_tensor = torch.tensor([vdw_rad_dict[atom] for atom in atom_name_list]).type(torch.float32)
+    vdw_rad_tensor = torch.tensor([vdw_rad_dict[atom] for atom in atom_name_list], device=try_gpu()).type(torch.float32)
     return vdw_rad_tensor
 
 def vdw_distance_matrix(atom_name_list):
@@ -206,7 +206,7 @@ def unitcell_grid_center(unitcell, spacing=4.5, frac=False, return_tensor=True):
             unitcell.orthogonalization_matrix).T)
 
     if return_tensor:
-        return torch.tensor(result)
+        return torch.tensor(result, device=try_gpu()).type(torch.float32)
     else:
         return result
 

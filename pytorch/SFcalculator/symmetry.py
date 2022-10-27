@@ -202,7 +202,7 @@ def generate_reciprocal_cell(cell, dmin, dtype=np.int32):
     return hkl
 
 
-def asu2p1_tf(atom_pos_orth, unitcell, spacegroup,
+def asu2p1_torch(atom_pos_orth, unitcell, spacegroup,
               incell=True, fractional=True):
     '''
     Apply symmetry operations to real space asu model coordinates
@@ -226,26 +226,21 @@ def asu2p1_tf(atom_pos_orth, unitcell, spacegroup,
     ------
     atom_pos_sym_oped, [N_atoms, N_ops, 3] tensor in either fractional or orthogonal coordinates
     '''
-    orth2frac_tensor = tf.constant(unitcell.fractionalization_matrix.tolist())
-    frac2orth_tensor = tf.constant(unitcell.orthogonalization_matrix.tolist())
+    orth2frac_tensor = torch.tensor(unitcell.fractionalization_matrix.tolist(), device=try_gpu())
+    frac2orth_tensor = torch.tensor(unitcell.orthogonalization_matrix.tolist(), device=try_gpu())
     operations = spacegroup.operations()  # gemmi.GroupOps object
-    R_G_tensor_stack = tf.stack([tf.constant(
-        sym_op.rot, dtype=tf.float32)/sym_op.DEN for sym_op in operations], axis=0)
-    T_G_tensor_stack = tf.stack([tf.constant(
-        sym_op.tran, dtype=tf.float32)/sym_op.DEN for sym_op in operations], axis=0)
-
-    atom_pos_frac = tf.tensordot(
-        atom_pos_orth, tf.transpose(orth2frac_tensor), 1)
-    sym_oped_pos_frac = tf.transpose(tf.tensordot(R_G_tensor_stack, tf.transpose(
-        atom_pos_frac), 1), perm=[2, 0, 1]) + T_G_tensor_stack
-
+    R_G_tensor_stack = torch.tensor(np.array([
+            np.array(sym_op.rot)/sym_op.DEN for sym_op in operations]), device=try_gpu()).type(torch.float32)
+    T_G_tensor_stack = torch.tensor(np.array([
+            np.array(sym_op.tran)/sym_op.DEN for sym_op in operations]), device=try_gpu()).type(torch.float32)
+    atom_pos_frac = torch.tensordot(atom_pos_orth, orth2frac_tensor.T, 1)
+    sym_oped_pos_frac = torch.permute(torch.tensordot(R_G_tensor_stack,
+        atom_pos_frac.T, 1), [2, 0, 1]) + T_G_tensor_stack
     if incell:
         sym_oped_pos_frac = sym_oped_pos_frac - \
-            tf.math.floor(sym_oped_pos_frac)
-
+            torch.floor(sym_oped_pos_frac)
     if fractional:
         return sym_oped_pos_frac
     else:
-        sym_oped_pos_orth = tf.tensordot(
-            sym_oped_pos_frac, tf.transpose(frac2orth_tensor), 1)
+        sym_oped_pos_orth = torch.tensordot(sym_oped_pos_frac, frac2orth_tensor.T, 1)
         return sym_oped_pos_orth

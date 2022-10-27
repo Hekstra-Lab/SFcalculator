@@ -21,7 +21,7 @@ from .symmetry import generate_reciprocal_asu, expand_to_p1
 from .mask import reciprocal_grid, rsgrid2realmask, realmask2Fmask
 from .utils import try_gpu, DWF_aniso, DWF_iso, diff_array, asu2HKL
 from .utils import vdw_rad_tensor, unitcell_grid_center
-from .packingscore import packingscore_voxelgrid_tf
+from .packingscore import packingscore_voxelgrid_torch
 
 
 class SFcalculator(object):
@@ -198,11 +198,9 @@ class SFcalculator(object):
         uc_grid_orth_tensor = unitcell_grid_center(self.unit_cell,
                                                    spacing=4.5,
                                                    return_tensor=True)
-        # TODO: This function need to be changed
-        occupancy, _ = packingscore_voxelgrid_tf(
+        occupancy, _ = packingscore_voxelgrid_torch(
             self.atom_pos_orth, self.unit_cell, self.space_group, vdw_rad, uc_grid_orth_tensor) 
-        self.solventpct = np.round(100 - occupancy.numpy()*100, 0)
-
+        self.solventpct = 1 - occupancy
         # grid size
         mtz = gemmi.Mtz(with_base=True)
         mtz.cell = self.unit_cell
@@ -294,7 +292,7 @@ class SFcalculator(object):
 
         Parameters
         ----------
-        solventpct: Int or Float, default None
+        solventpct: 0 - 1 Float, default None
             An approximate value of volume percentage of solvent in the unitcell. 
             run `inspect_data` before to use a suggested value
 

@@ -1,8 +1,10 @@
-import tensorflow as tf
+import torch
 import numpy as np
-from .symmetry import asu2p1_tf
 
-def voxelvalue_tf_asu(unitcell_grid_center_orth, atom_pos_orth,
+from pytorch.SFcalculator.utils import try_gpu
+from .symmetry import asu2p1_torch
+
+def voxelvalue_torch_asu(unitcell_grid_center_orth, atom_pos_orth,
                       frac2orth_tensor, orth2frac_tensor,
                       vdw_rad_tensor,
                       s=10., binary=True, cutoff=0.1):
@@ -43,23 +45,21 @@ def voxelvalue_tf_asu(unitcell_grid_center_orth, atom_pos_orth,
     -------
     voxel_value, tensor [N_grid,]
     '''
-    atom_pos_frac = tf.tensordot(
-        atom_pos_orth, tf.transpose(orth2frac_tensor), 1)
-    atom_pos_frac_incell = atom_pos_frac - tf.math.floor(atom_pos_frac)
-    atom_pos_orth_incell = tf.tensordot(
-        atom_pos_frac_incell, tf.transpose(frac2orth_tensor), 1)
-    voxel2atom_dist = tf.sqrt(tf.reduce_sum(tf.square(unitcell_grid_center_orth[:, None, :] - atom_pos_orth_incell[None, ...]),
-                                            axis=-1))
-    sigmoid_value = 1./(1.+tf.exp(s*(voxel2atom_dist - vdw_rad_tensor)))
-    voxel_value = tf.reduce_sum(sigmoid_value, axis=-1)
+    atom_pos_frac = torch.tensordot(atom_pos_orth, orth2frac_tensor.T, 1)
+    atom_pos_frac_incell = atom_pos_frac - torch.floor(atom_pos_frac)
+    atom_pos_orth_incell = torch.tensordot(atom_pos_frac_incell, frac2orth_tensor.T, 1)
+    voxel2atom_dist = torch.sqrt(torch.sum(torch.square(unitcell_grid_center_orth[:, None, :] - atom_pos_orth_incell[None, ...]),
+                                            dim=-1))
+    sigmoid_value = 1./(1.+torch.exp(s*(voxel2atom_dist - vdw_rad_tensor)))
+    voxel_value = torch.sum(sigmoid_value, dim=-1)
     if binary:
-        return tf.where(voxel_value > cutoff, 1.0, 0.0)
+        return torch.where(voxel_value > cutoff, 1.0, 0.0)
     else:
         return voxel_value
 
 
-def voxelvalue_tf_p1(unitcell_grid_center_orth, atom_pos_orth, unit_cell, space_group, vdw_rad_tensor,
-                     s=10., binary=True, cutoff=0.1):
+def voxelvalue_torch_p1(unitcell_grid_center_orth, atom_pos_orth, unit_cell, space_group, vdw_rad_tensor,
+                        s=10., binary=True, cutoff=0.1):
     '''
     Differentiably render atom coordinates into real space grid map value
     Va(d, ra) = 1 / (1 + exp(s*(d-ra)))
@@ -99,21 +99,22 @@ def voxelvalue_tf_p1(unitcell_grid_center_orth, atom_pos_orth, unit_cell, space_
     -------
     voxel_value, tensor [N_grid,]
     '''
-    sym_oped_atom_pos_orth_incell = asu2p1_tf(atom_pos_orth,
+    sym_oped_atom_pos_orth_incell = asu2p1_torch(atom_pos_orth,
                                               unit_cell, space_group,
                                               incell=True, fractional=False)
-    voxel2atom_dist = tf.sqrt(tf.reduce_sum(tf.square(unitcell_grid_center_orth[:, None, None, :] - sym_oped_atom_pos_orth_incell[None, ...]),
-                                            axis=-1))
+    voxel2atom_dist = torch.sqrt(torch.sum(torch.square(unitcell_grid_center_orth[:, None, None, :] - sym_oped_atom_pos_orth_incell[None, ...]),
+                                            dim=-1))
     sigmoid_value = 1. / \
-        (1.+tf.exp(s*(voxel2atom_dist - vdw_rad_tensor[:, None])))
-    voxel_value = tf.reduce_sum(sigmoid_value, axis=1)
+        (1.+torch.exp(s*(voxel2atom_dist - vdw_rad_tensor[:, None])))
+
+    voxel_value = torch.sum(sigmoid_value, dim=1)
     if binary:
-        return tf.reduce_sum(tf.where(voxel_value > cutoff, 1.0, 0.0), axis=-1)
+        return torch.sum(torch.where(voxel_value > cutoff, 1.0, 0.0), dim=-1)
     else:
-        return tf.reduce_sum(voxel_value, axis=-1)
+        return torch.sum(voxel_value, dim=-1)
 
 
-def voxelvalue_tf_p1_savememory(unitcell_grid_center_orth, atom_pos_orth, unit_cell, space_group, vdw_rad_tensor,
+def voxelvalue_torch_p1_savememory(unitcell_grid_center_orth, atom_pos_orth, unit_cell, space_group, vdw_rad_tensor,
                                 s=10., binary=True, cutoff=0.1):
     '''
     Differentiably render atom coordinates into real space grid map value
@@ -157,19 +158,19 @@ def voxelvalue_tf_p1_savememory(unitcell_grid_center_orth, atom_pos_orth, unit_c
     -------
     1D voxel_value, tensor [N_grid,]
     '''
-    sym_oped_atom_pos_orth_incell = sym_oped_atom_pos_orth_incell = asu2p1_tf(atom_pos_orth,
-                                                                              unit_cell, space_group,
-                                                                              incell=True, fractional=False)
+    sym_oped_atom_pos_orth_incell = sym_oped_atom_pos_orth_incell = asu2p1_torch(atom_pos_orth,
+                                                                                 unit_cell, space_group,
+                                                                                 incell=True, fractional=False)
     N_ops = len(sym_oped_atom_pos_orth_incell[0])
-    voxel_map = tf.constant(0., dtype=tf.float32)
+    voxel_map = torch.tensor(0., device=try_gpu())
     for i in range(N_ops):
         model_i = sym_oped_atom_pos_orth_incell[:, i, :]
-        voxel2atom_dist = tf.sqrt(tf.reduce_sum(tf.square(unitcell_grid_center_orth[:, None, :] - model_i[None, ...]),
-                                                axis=-1))
-        sigmoid_value = 1./(1.+tf.exp(s*(voxel2atom_dist - vdw_rad_tensor)))
-        voxel_value = tf.reduce_sum(sigmoid_value, axis=-1)
+        voxel2atom_dist = torch.sqrt(torch.sum(torch.square(unitcell_grid_center_orth[:, None, :] - model_i[None, ...]),
+                                                dim=-1))
+        sigmoid_value = 1./(1.+torch.exp(s*(voxel2atom_dist - vdw_rad_tensor)))
+        voxel_value = torch.sum(sigmoid_value, dim=-1)
         if binary:
-            map_i = tf.where(voxel_value > cutoff, 1.0, 0.0)
+            map_i = torch.where(voxel_value > cutoff, 1.0, 0.0)
         else:
             map_i = voxel_value
         voxel_map += map_i
@@ -194,7 +195,7 @@ def voxel_1dto3d_np(voxel_value_1d, na, nb, nc):
     return voxel_value_3d
 
 
-def voxel_1dto3d_tf(voxel_value_1d, na, nb, nc):
-    temp_3d = tf.reshape(voxel_value_1d, [nc, na, nb])
-    voxel_value_3d = tf.transpose(temp_3d, [1, 2, 0])
+def voxel_1dto3d_torch(voxel_value_1d, na, nb, nc):
+    temp_3d = torch.reshape(voxel_value_1d, [nc, na, nb])
+    voxel_value_3d = torch.permute(temp_3d, dims=[1, 2, 0])
     return voxel_value_3d
