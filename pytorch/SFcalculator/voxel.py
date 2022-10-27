@@ -1,7 +1,7 @@
 import torch
 import numpy as np
 
-from pytorch.SFcalculator.utils import try_gpu
+from .utils import try_gpu
 from .symmetry import asu2p1_torch
 
 def voxelvalue_torch_asu(unitcell_grid_center_orth, atom_pos_orth,
