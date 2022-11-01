@@ -1,5 +1,4 @@
-## Structure Factor Calculator implemented in `tensorflow2`, `pytorch` and `jax`.
----
+## Structure Factor Calculator implemented in `tensorflow2`, `pytorch` and `jax`
 
 A differentiable pipeline connecting the protein atomic models and experimental structure factors, including all the symmetry-related nitty-gritty in both real space and reciprocal space.
 
