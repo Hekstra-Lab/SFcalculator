@@ -65,11 +65,11 @@ def expand_to_p1(spacegroup, Hasu_array, Fasu_tensor, dmin_mask=6.0, Batch=False
 
     if Batch:
         # Batched calculation
-        assert Fasu_tensor.dim() == 2, "Give batch Fasu if you set Batch=True!"
+        assert Fasu_tensor.ndim == 2, "Give batch Fasu if you set Batch=True!"
         concat_axis = 1
     else:
         # Single model calculation
-        assert Fasu_tensor.dim() == 1, "Give single Fasu if you set Batch=False!"
+        assert Fasu_tensor.ndim == 1, "Give single Fasu if you set Batch=False!"
         concat_axis = 0
     if dmin_mask is not None:
         # expands to p1 with resolution set by dmin_mask, to remove high-frequency noise.

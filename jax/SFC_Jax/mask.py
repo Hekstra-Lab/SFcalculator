@@ -33,7 +33,7 @@ def reciprocal_grid(Hp1_array, Fp1_tensor, gridsize, batchsize=None):
                 grid_batch = jnp.concatenate((grid_batch, grid_i[None, ...]), axis=0) #type: ignore
         return grid_batch #type: ignore
     else:
-        grid[tuple_index] = Fp1_tensor
+        grid = grid.at[tuple_index].set(Fp1_tensor)
         return grid
 
 
