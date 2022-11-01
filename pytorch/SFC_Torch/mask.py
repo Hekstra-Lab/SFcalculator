@@ -72,7 +72,7 @@ def rsgrid2realmask(rs_grid, solvent_percent=0.50, scale=50, Batch=False):
 def realmask2Fmask(real_grid_mask, H_array, batchsize=None):
     '''
     Convert real space solvent mask grid to mask structural factor, in a fully differentiable
-    manner, with tensorflow.
+    manner
 
     Parameters:
     -----------
@@ -87,7 +87,7 @@ def realmask2Fmask(real_grid_mask, H_array, batchsize=None):
     torch.complex64 tensor
     Solvent mask structural factor corresponding to the HKL list in H_array
     '''
-    Fmask_grid = torch.fft.ifftn(real_grid_mask, dim=(-3,-2,-1))
+    Fmask_grid = torch.fft.ifftn(real_grid_mask, dim=(-3,-2,-1), norm='forward')
     tuple_index = tuple(torch.tensor(H_array.T, device=try_gpu(), dtype=int)) #type: ignore
     if batchsize is not None:
         Fmask = Fmask_grid[(slice(None), *tuple_index)]
