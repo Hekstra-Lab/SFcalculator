@@ -21,7 +21,7 @@ from .symmetry import generate_reciprocal_asu, expand_to_p1
 from .mask import reciprocal_grid, rsgrid2realmask, realmask2Fmask
 from .utils import DWF_aniso, DWF_iso, diff_array, asu2HKL
 from .utils import vdw_rad_tensor, unitcell_grid_center
-from .packingscore import packingscore_voxelgrid_torch
+from .packingscore import packingscore_voxelgrid_jax
 
 class SFcalculator(object):
     '''
@@ -435,7 +435,7 @@ class SFcalculator(object):
                 Fmask_batch = Fmask_batch_j
             else:
                 # Shape [N_batches, N_HKLs]
-                Fmask_batch = torch.concat((Fmask_batch, Fmask_batch_j), dim=0) #type: ignore
+                Fmask_batch = jnp.concatenate((Fmask_batch, Fmask_batch_j), dim=0) #type: ignore
         zero_hkl_bool = jnp.array(self.dHKL <= dmin_nonzero)
         Fmask_batch[:, zero_hkl_bool] = jnp.array(0., dtype=jnp.complex64) #type: ignore
         if not self.HKL_array is None:
@@ -595,7 +595,7 @@ def F_protein_batch(HKL_array, dr2_array, fullsf_tensor, reciprocal_cell_paras,
             F_calc = Fcalc_j
         else:
             # Shape [N_batches, N_HKLs]
-            F_calc = torch.concat((F_calc, Fcalc_j), dim=0) #type: ignore
+            F_calc = jnp.concatenate((F_calc, Fcalc_j), dim=0) #type: ignore
     return F_calc
 
         

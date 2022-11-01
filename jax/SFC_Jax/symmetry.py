@@ -203,7 +203,7 @@ def generate_reciprocal_cell(cell, dmin, dtype=np.int32):
     return hkl
 
 
-def asu2p1_torch(atom_pos_orth, unitcell, spacegroup,
+def asu2p1_jax(atom_pos_orth, unitcell, spacegroup,
               incell=True, fractional=True):
     '''
     Apply symmetry operations to real space asu model coordinates
