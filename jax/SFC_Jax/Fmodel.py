@@ -195,7 +195,7 @@ class SFcalculator(object):
         uc_grid_orth_tensor = unitcell_grid_center(self.unit_cell,
                                                    spacing=4.5,
                                                    return_tensor=True)
-        occupancy, _ = packingscore_voxelgrid_torch(
+        occupancy, _ = packingscore_voxelgrid_jax(
             self.atom_pos_orth, self.unit_cell, self.space_group, vdw_rad, uc_grid_orth_tensor) 
         self.solventpct = 1 - occupancy
         # grid size
@@ -515,7 +515,7 @@ def F_protein(HKL_array, dr2_array, fullsf_tensor, reciprocal_cell_paras,
         # Some atoms do not have Anisotropic U
         mask_vec = jnp.all(atom_b_aniso == jnp.array([0.]*6), axis=-1)
         dwf_all = dwf_aniso
-        dwf_all[mask_vec] = dwf_iso[mask_vec]
+        dwf_all = dwf_all.at[mask_vec].set(dwf_iso[mask_vec])
 
         # Apply Atomic Structure Factor and Occupancy for magnitude
         magnitude = dwf_all * fullsf_tensor * \
@@ -527,7 +527,7 @@ def F_protein(HKL_array, dr2_array, fullsf_tensor, reciprocal_cell_paras,
     cos_phase = 0.
     sin_phase = 0.
     # Loop through symmetry operations instead of fully vectorization, to reduce the memory cost
-    for i in range(sym_oped_pos_frac.size(dim=1)):
+    for i in range(sym_oped_pos_frac.shape[1]):
         phase_G = 2*np.pi*jnp.tensordot(HKL_tensor,sym_oped_pos_frac[:, i, :].T, 1)
         cos_phase += jnp.cos(phase_G)
         sin_phase += jnp.sin(phase_G)  # Shape [N_HKLs, N_atoms]
@@ -568,7 +568,7 @@ def F_protein_batch(HKL_array, dr2_array, fullsf_tensor, reciprocal_cell_paras,
         # Some atoms do not have Anisotropic U
         mask_vec = jnp.all(atom_b_aniso == jnp.array([0.]*6), axis=-1)
         dwf_all = dwf_aniso
-        dwf_all[mask_vec] = dwf_iso[mask_vec]
+        dwf_all = dwf_all.at[mask_vec].set(dwf_iso[mask_vec])
         # Apply Atomic Structure Factor and Occupancy for magnitude
         magnitude = dwf_all * fullsf_tensor * \
             atom_occ[..., None]  # [N_atoms, N_HKLs]
