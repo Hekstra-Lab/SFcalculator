@@ -1,8 +1,12 @@
-## Structure Factor Calculator implemented in `tensorflow2`, `pytorch` and `jax`
+## SFcalculator
 
-A differentiable pipeline connecting the protein atomic models and experimental structure factors, including all the symmetry-related nitty-gritty in both real space and reciprocal space.
+Structure Factor Calculator implemented in `tensorflow2`, `pytorch` and `jax`. 
 
-Provided in all three pupular deep learning frameworks.
+A differentiable pipeline connecting the protein atomic models and experimental structure factors, featuring a differentiable bulk solvent correction.
+
+The symmetry-related nitty-gritty in both real space and reciprocal space are included.
+
+Provided in three popular deep learning frameworks.
 
 ### Installation
 
