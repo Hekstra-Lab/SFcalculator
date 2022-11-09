@@ -381,7 +381,6 @@ class SFcalculator(object):
         if not atoms_position_tensor is None:
             assert len(
                 atoms_position_tensor) == self.n_atoms, "Atoms in atoms_positions_tensor should be consistent with atom names in PDB model!"
-            # TODO Test the following line with non-orthogonal unit cell, check if we need a transpose at the transform matrix
             self.atom_pos_frac = tf.tensordot(
                 atoms_position_tensor, tf.transpose(self.orth2frac_tensor), 1)
 
