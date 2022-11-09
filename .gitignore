@@ -22,3 +22,7 @@ MANIFEST
 
 # IDEA
 .vscode/
+
+# PDB models
+models/
+reflections/
