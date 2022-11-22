@@ -13,7 +13,6 @@ __email__ = "minhuanli@g.harvard.edu"
 
 import gemmi
 import numpy as np
-from zmq import device
 import torch
 import reciprocalspaceship as rs
 
@@ -33,7 +32,9 @@ class SFcalculator(object):
                  mtzfile_dir=None,
                  dmin=None,
                  set_experiment=True,
-                 nansubset=['FP', 'SIGFP']):
+                 nansubset=['FP', 'SIGFP'],
+                 freeflag='FreeR_flag',
+                 testset_value=0):
         '''
         Initialize with necessary reusable information, like spacegroup, unit cell info, HKL_list, et.c.
 
@@ -106,7 +107,7 @@ class SFcalculator(object):
             self.dr2HKL_array = self.unit_cell.calculate_1_d2_array(
                 self.HKL_array)
             if set_experiment:
-                self.set_experiment(mtz_reference)
+                self.set_experiment(mtz_reference, freeflag, testset_value)
         else:
             if not dmin:
                 raise ValueError(
@@ -168,7 +169,7 @@ class SFcalculator(object):
             self.full_atomic_sf_asu[atom] for atom in self.atom_name]), device=try_gpu()).type(torch.float32)
         self.inspected = False
 
-    def set_experiment(self, exp_mtz):
+    def set_experiment(self, exp_mtz, freeflag='FreeR_flag', testset_value=0):
         '''
         Set experimental data in the refinement
 
@@ -181,9 +182,9 @@ class SFcalculator(object):
             print("MTZ file doesn't contain 'FP' or 'SIGFP'! Check your data!")
         try:
             self.rfree_id = np.argwhere(
-                exp_mtz["FreeR_flag"].values == 0).reshape(-1)
+                exp_mtz[freeflag].values == testset_value).reshape(-1)
             self.rwork_id = np.argwhere(
-                exp_mtz["FreeR_flag"].values != 0).reshape(-1)
+                exp_mtz[freeflag].values != testset_value).reshape(-1)
         except:
             print("No Free Flag! Check your data!")
 
