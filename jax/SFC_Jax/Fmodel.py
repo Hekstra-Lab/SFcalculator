@@ -321,17 +321,17 @@ class SFcalculator(object):
         self.real_grid_mask = rsgrid2realmask(
             rs_grid, solvent_percent=solventpct) #type: ignore
         if not self.HKL_array is None:
-            self.Fmask_HKL = realmask2Fmask(
+            Fmask_HKL = realmask2Fmask(
                 self.real_grid_mask, self.HKL_array)
             zero_hkl_bool = jnp.array(self.dHKL <= dmin_nonzero)
-            self.Fmask_HKL = self.Fmask_HKL.at[zero_hkl_bool].set(jnp.array(0., dtype=jnp.complex64))
+            self.Fmask_HKL = jnp.where(zero_hkl_bool, jnp.array(0., dtype=jnp.complex64), Fmask_HKL)
             if Print:
                 return self.Fmask_HKL
         else:
-            self.Fmask_asu = realmask2Fmask(
+            Fmask_asu = realmask2Fmask(
                 self.real_grid_mask, self.Hasu_array)
             zero_hkl_bool = jnp.array(self.dHasu <= dmin_nonzero)
-            self.Fmask_asu[zero_hkl_bool] = jnp.array(0., dtype=jnp.complex64)
+            self.Fmask_asu = jnp.where(zero_hkl_bool, jnp.array(0., dtype=jnp.complex64), Fmask_asu)
             if Print:
                 return self.Fmask_asu
 
@@ -438,7 +438,7 @@ class SFcalculator(object):
                 # Shape [N_batches, N_HKLs]
                 Fmask_batch = jnp.concatenate((Fmask_batch, Fmask_batch_j), dim=0) #type: ignore
         zero_hkl_bool = jnp.array(self.dHKL <= dmin_nonzero)
-        Fmask_batch = Fmask_batch.at[:, zero_hkl_bool].set(jnp.array(0., dtype=jnp.complex64)) #type: ignore
+        Fmask_batch = jnp.where(zero_hkl_bool, jnp.array(0., dtype=jnp.complex64), Fmask_batch)
         if not self.HKL_array is None:
             self.Fmask_HKL_batch = Fmask_batch
             if Print:
@@ -515,8 +515,7 @@ def F_protein(HKL_array, dr2_array, fullsf_tensor, reciprocal_cell_paras,
         dwf_aniso = DWF_aniso(atom_b_aniso, reciprocal_cell_paras, HKL_array)
         # Some atoms do not have Anisotropic U
         mask_vec = jnp.all(atom_b_aniso == jnp.array([0.]*6), axis=-1)
-        dwf_all = dwf_aniso
-        dwf_all = dwf_all.at[mask_vec].set(dwf_iso[mask_vec])
+        dwf_all = jnp.where(mask_vec, dwf_iso, dwf_aniso)
 
         # Apply Atomic Structure Factor and Occupancy for magnitude
         magnitude = dwf_all * fullsf_tensor * \
@@ -568,8 +567,7 @@ def F_protein_batch(HKL_array, dr2_array, fullsf_tensor, reciprocal_cell_paras,
         dwf_aniso = DWF_aniso(atom_b_aniso, reciprocal_cell_paras, HKL_array)
         # Some atoms do not have Anisotropic U
         mask_vec = jnp.all(atom_b_aniso == jnp.array([0.]*6), axis=-1)
-        dwf_all = dwf_aniso
-        dwf_all = dwf_all.at[mask_vec].set(dwf_iso[mask_vec])
+        dwf_all = jnp.where(mask_vec, dwf_iso, dwf_aniso)
         # Apply Atomic Structure Factor and Occupancy for magnitude
         magnitude = dwf_all * fullsf_tensor * \
             atom_occ[..., None]  # [N_atoms, N_HKLs]
