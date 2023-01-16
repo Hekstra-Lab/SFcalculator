@@ -223,7 +223,7 @@ class SFcalculator(object):
 
         print(f"Solvent Percentage: {self.solventpct:.3f}")
         print("Grid size:", self.gridsize)
-        print("Filtered P1 HKL length: ", len(self.Hp1_array))
+        print("Filtered P1 HKL length: ", len(self.Hp1_array_filtered))
         self.inspected = True
 
     def Calc_Fprotein(self, atoms_position_tensor=None,
@@ -231,7 +231,7 @@ class SFcalculator(object):
                       atoms_baniso_tensor=None,
                       atoms_occ_tensor=None,
                       NO_Bfactor=False,
-                      Print=False):
+                      Return=False):
         '''
         Calculate the structural factor from a single atomic model, without solvent masking
 
@@ -252,12 +252,12 @@ class SFcalculator(object):
         NO_Bfactor: Boolean, default False
             If True, the calculation will not use Bfactor parameterization; Useful when we are parameterizing the ensemble with a true distribution
 
-        Print: Boolean, default False
+        Return: Boolean, default False
             If True, it will return the Fprotein as the function output; Or It will just be saved in the `Fprotein_asu` and `Fprotein_HKL` attributes
 
         Returns
         -------
-        None (Print=False) or Fprotein (Print=True)
+        None (Return=False) or Fprotein (Return=True)
         '''
         # Read and tensor-fy necessary inforamtion
         if not atoms_position_tensor is None:
@@ -290,13 +290,13 @@ class SFcalculator(object):
                                       NO_Bfactor=NO_Bfactor)
         if not self.HKL_array is None:
             self.Fprotein_HKL = self.Fprotein_asu[self.asu2HKL_index]
-            if Print:
+            if Return:
                 return self.Fprotein_HKL
         else:
-            if Print:
+            if Return:
                 return self.Fprotein_asu
 
-    def Calc_Fsolvent(self, solventpct=None, gridsize=None, Print=False, dmin_nonzero=3.0):
+    def Calc_Fsolvent(self, solventpct=None, gridsize=None, Return=False, dmin_nonzero=3.0):
         '''
         Calculate the structure factor of solvent mask in a differentiable way
 
@@ -313,7 +313,7 @@ class SFcalculator(object):
         dmin_mask: np.float32, Default 6 angstroms.
             Minimum resolution cutoff, in angstroms, for creating the solvent mask
 
-        Print: Boolean, default False
+        Return: Boolean, default False
             If True, it will return the Fmask as the function output; Or It will just be saved in the `Fmask_asu` and `Fmask_HKL` attributes
         '''
 
@@ -339,7 +339,7 @@ class SFcalculator(object):
             zero_hkl_bool = jnp.array(self.dHKL <= dmin_nonzero)
             self.Fmask_HKL = jnp.where(zero_hkl_bool, jnp.array(
                 0., dtype=jnp.complex64), Fmask_HKL)
-            if Print:
+            if Return:
                 return self.Fmask_HKL
         else:
             Fmask_asu = realmask2Fmask(
@@ -347,7 +347,7 @@ class SFcalculator(object):
             zero_hkl_bool = jnp.array(self.dHasu <= dmin_nonzero)
             self.Fmask_asu = jnp.where(zero_hkl_bool, jnp.array(
                 0., dtype=jnp.complex64), Fmask_asu)
-            if Print:
+            if Return:
                 return self.Fmask_asu
 
     def Calc_Ftotal(self, kall=None, kaniso=None, ksol=None, bsol=None, key=jax.random.PRNGKey(42)):
@@ -375,7 +375,7 @@ class SFcalculator(object):
                 0] * (self.Fprotein_asu+scaled_Fmask)
             return self.Ftotal_asu
 
-    def Calc_Fprotein_batch(self, atoms_position_batch, NO_Bfactor=False, Print=False, PARTITION=20):
+    def Calc_Fprotein_batch(self, atoms_position_batch, NO_Bfactor=False, Return=False, PARTITION=20):
         '''
         Calculate the Fprotein with batched models. Most parameters are similar to `Calc_Fprotein`
 
@@ -404,13 +404,13 @@ class SFcalculator(object):
             # type: ignore
             self.Fprotein_HKL_batch = self.Fprotein_asu_batch[:,
                                                               self.asu2HKL_index]
-            if Print:
+            if Return:
                 return self.Fprotein_HKL_batch
         else:
-            if Print:
+            if Return:
                 return self.Fprotein_asu_batch
 
-    def Calc_Fsolvent_batch(self, solventpct=None, gridsize=None, dmin_mask=6, Print=False, PARTITION=100, dmin_nonzero=3.0):
+    def Calc_Fsolvent_batch(self, solventpct=None, gridsize=None, dmin_mask=6, Return=False, PARTITION=100, dmin_nonzero=3.0):
         '''
         Should run after Calc_Fprotein_batch, calculate the solvent mask structure factors in batched manner
         most parameters are similar to `Calc_Fmask`
@@ -429,8 +429,8 @@ class SFcalculator(object):
             assert self.inspected, "Run inspect_data first or give a valid grid size!"
             gridsize = self.gridsize
 
-        Hp1_array, Fp1_tensor_batch = expand_to_p1(
-            self.space_group, self.Hasu_array, self.Fprotein_asu_batch,
+        Fp1_tensor_batch = expand_to_p1(
+            self.space_group, self.Hasu_array, self.Fprotein_asu_batch, self.idx_1, self.idx_2,
             dmin_mask=dmin_mask, Batch=True, unitcell=self.unit_cell)
 
         batchsize = self.Fprotein_asu_batch.shape[0]  # type: ignore
@@ -449,7 +449,7 @@ class SFcalculator(object):
             end = min((j+1)*PARTITION, batchsize)
             # Shape [N_batch, *gridsize]
             rs_grid = reciprocal_grid(
-                Hp1_array, Fp1_tensor_batch[start:end], gridsize, end-start)
+                self.Hp1_array_filtered, Fp1_tensor_batch[start:end], gridsize, end-start)
             real_grid_mask = rsgrid2realmask(
                 rs_grid, solvent_percent=solventpct, Batch=True)  # type: ignore
             Fmask_batch_j = realmask2Fmask(
@@ -465,11 +465,11 @@ class SFcalculator(object):
             0., dtype=jnp.complex64), Fmask_batch)
         if not self.HKL_array is None:
             self.Fmask_HKL_batch = Fmask_batch
-            if Print:
+            if Return:
                 return self.Fmask_HKL_batch
         else:
             self.Fmask_asu_batch = Fmask_batch
-            if Print:
+            if Return:
                 return self.Fmask_asu_batch
 
     def Calc_Ftotal_batch(self, kall=None, kaniso=None, ksol=None, bsol=None, key=jax.random.PRNGKey(42)):
