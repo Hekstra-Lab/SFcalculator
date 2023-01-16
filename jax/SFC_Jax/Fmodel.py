@@ -17,11 +17,12 @@ import jax
 from jax import numpy as jnp
 import reciprocalspaceship as rs
 
-from .symmetry import generate_reciprocal_asu, expand_to_p1
+from .symmetry import generate_reciprocal_asu, expand_to_p1, get_p1_idx
 from .mask import reciprocal_grid, rsgrid2realmask, realmask2Fmask
 from .utils import DWF_aniso, DWF_iso, diff_array, asu2HKL
 from .utils import vdw_rad_tensor, unitcell_grid_center
 from .packingscore import packingscore_voxelgrid_jax
+
 
 class SFcalculator(object):
     '''
@@ -62,7 +63,7 @@ class SFcalculator(object):
         self.space_group = gemmi.SpaceGroup(
             structure.spacegroup_hm)  # gemmi.SpaceGroup object
         self.operations = self.space_group.operations()  # gemmi.GroupOps object
-        
+
         self.R_G_tensor_stack = jnp.array(np.array([
             np.array(sym_op.rot)/sym_op.DEN for sym_op in self.operations])).astype(jnp.float32)
         self.T_G_tensor_stack = jnp.array(np.array([
@@ -71,17 +72,17 @@ class SFcalculator(object):
         self.reciprocal_cell = self.unit_cell.reciprocal()  # gemmi.UnitCell object
         # [ar, br, cr, cos(alpha_r), cos(beta_r), cos(gamma_r)]
         self.reciprocal_cell_paras = jnp.array([self.reciprocal_cell.a,
-                                      self.reciprocal_cell.b,
-                                      self.reciprocal_cell.c,
-                                      np.cos(np.deg2rad(
-                                          self.reciprocal_cell.alpha)),
-                                      np.cos(np.deg2rad(
-                                          self.reciprocal_cell.beta)),
-                                      np.cos(np.deg2rad(
-                                          self.reciprocal_cell.gamma))
-                                      ]).astype(jnp.float32)
+                                                self.reciprocal_cell.b,
+                                                self.reciprocal_cell.c,
+                                                np.cos(np.deg2rad(
+                                                    self.reciprocal_cell.alpha)),
+                                                np.cos(np.deg2rad(
+                                                    self.reciprocal_cell.beta)),
+                                                np.cos(np.deg2rad(
+                                                    self.reciprocal_cell.gamma))
+                                                ]).astype(jnp.float32)
         if mtzfile_dir:
-            mtz_reference = rs.read_mtz(mtzfile_dir, freeflag, testset_value)
+            mtz_reference = rs.read_mtz(mtzfile_dir)
             try:
                 mtz_reference.dropna(axis=0, subset=nansubset, inplace=True)
             except:
@@ -89,23 +90,24 @@ class SFcalculator(object):
                     f"{nansubset} columns not included in the mtz file!")
             # HKL array from the reference mtz file, [N,3]
             self.HKL_array = mtz_reference.get_hkls()
-            self.dHKL = self.unit_cell.calculate_d_array(self.HKL_array).astype("float32")
+            self.dHKL = self.unit_cell.calculate_d_array(
+                self.HKL_array).astype("float32")
             self.dmin = self.dHKL.min()
             assert mtz_reference.cell == self.unit_cell, "Unit cell from mtz file does not match that in PDB file!"
-            assert mtz_reference.spacegroup.hm == self.space_group.hm, "Space group from mtz file does not match that in PDB file!" #type: ignore
+            assert mtz_reference.spacegroup.hm == self.space_group.hm, "Space group from mtz file does not match that in PDB file!"  # type: ignore
             self.Hasu_array = generate_reciprocal_asu(
                 self.unit_cell, self.space_group, self.dmin)
             assert diff_array(self.HKL_array, self.Hasu_array) == set(
             ), "HKL_array should be equal or subset of the Hasu_array!"
             # TODO: See if need to change to tensor
-            self.asu2HKL_index = asu2HKL(self.Hasu_array, self.HKL_array) 
+            self.asu2HKL_index = asu2HKL(self.Hasu_array, self.HKL_array)
             # d*^2 array according to the HKL list, [N]
             self.dr2asu_array = self.unit_cell.calculate_1_d2_array(
                 self.Hasu_array)
             self.dr2HKL_array = self.unit_cell.calculate_1_d2_array(
                 self.HKL_array)
             if set_experiment:
-                self.set_experiment(mtz_reference)
+                self.set_experiment(mtz_reference, freeflag, testset_value)
         else:
             if not dmin:
                 raise ValueError(
@@ -114,7 +116,8 @@ class SFcalculator(object):
                 self.dmin = dmin
                 self.Hasu_array = generate_reciprocal_asu(
                     self.unit_cell, self.space_group, self.dmin)
-                self.dHasu = self.unit_cell.calculate_d_array(self.Hasu_array).astype("float32")
+                self.dHasu = self.unit_cell.calculate_d_array(
+                    self.Hasu_array).astype("float32")
                 self.dr2asu_array = self.unit_cell.calculate_1_d2_array(
                     self.Hasu_array)
                 self.HKL_array = None
@@ -175,7 +178,8 @@ class SFcalculator(object):
         '''
         try:
             self.Fo = jnp.array(exp_mtz["FP"].to_numpy()).astype(jnp.float32)
-            self.SigF = jnp.array(exp_mtz["SIGFP"].to_numpy()).astype(jnp.float32)
+            self.SigF = jnp.array(
+                exp_mtz["SIGFP"].to_numpy()).astype(jnp.float32)
         except:
             print("MTZ file doesn't contain 'FP' or 'SIGFP'! Check your data!")
         try:
@@ -186,11 +190,12 @@ class SFcalculator(object):
         except:
             print("No Free Flag! Check your data!")
 
-    def inspect_data(self):
+    def inspect_data(self, dmin_mask=6.0):
         '''
         Do an inspection of data, for hints about 
         1. solvent percentage for mask calculation
         2. suitable grid size 
+        3. pre-calculate index used in expand to p1
         '''
         # solvent percentage
         vdw_rad = vdw_rad_tensor(self.atom_name)
@@ -198,8 +203,9 @@ class SFcalculator(object):
                                                    spacing=4.5,
                                                    return_tensor=True)
         occupancy, _ = packingscore_voxelgrid_jax(
-            self.atom_pos_orth, self.unit_cell, self.space_group, vdw_rad, uc_grid_orth_tensor) 
+            self.atom_pos_orth, self.unit_cell, self.space_group, vdw_rad, uc_grid_orth_tensor)
         self.solventpct = 1 - occupancy
+
         # grid size
         mtz = gemmi.Mtz(with_base=True)
         mtz.cell = self.unit_cell
@@ -210,8 +216,14 @@ class SFcalculator(object):
             mtz.set_data(self.Hasu_array)
         self.gridsize = mtz.get_size_for_hkl(sample_rate=3.0)
 
-        print("Solvent Percentage:", self.solventpct)
+        # index used in expand to p1
+        self.dmin_mask = dmin_mask
+        self.Hp1_array_filtered, self.idx_1, self.idx_2 = get_p1_idx(
+            self.space_group, self.Hasu_array, self.dmin_mask, self.unit_cell)
+
+        print(f"Solvent Percentage: {self.solventpct:.3f}")
         print("Grid size:", self.gridsize)
+        print("Filtered P1 HKL length: ", len(self.Hp1_array))
         self.inspected = True
 
     def Calc_Fprotein(self, atoms_position_tensor=None,
@@ -284,7 +296,7 @@ class SFcalculator(object):
             if Print:
                 return self.Fprotein_asu
 
-    def Calc_Fsolvent(self, solventpct=None, gridsize=None, dmin_mask=6.0, Print=False, dmin_nonzero=3.0):
+    def Calc_Fsolvent(self, solventpct=None, gridsize=None, Print=False, dmin_nonzero=3.0):
         '''
         Calculate the structure factor of solvent mask in a differentiable way
 
@@ -314,24 +326,27 @@ class SFcalculator(object):
             gridsize = self.gridsize
 
         # Shape [N_HKL_p1, 3], [N_HKL_p1,]
-        Hp1_array, Fp1_tensor = expand_to_p1(
-            self.space_group, self.Hasu_array, self.Fprotein_asu,
-            dmin_mask=dmin_mask, unitcell=self.unit_cell)
-        rs_grid = reciprocal_grid(Hp1_array, Fp1_tensor, gridsize)
+        Fp1_tensor = expand_to_p1(
+            self.space_group, self.Hasu_array, self.Fprotein_asu, 
+            self.idx_1, self.idx_2,
+            dmin_mask=self.dmin_mask, unitcell=self.unit_cell)
+        rs_grid = reciprocal_grid(self.Hp1_array_filtered, Fp1_tensor, gridsize)
         self.real_grid_mask = rsgrid2realmask(
-            rs_grid, solvent_percent=solventpct) #type: ignore
+            rs_grid, solvent_percent=solventpct)  # type: ignore
         if not self.HKL_array is None:
             Fmask_HKL = realmask2Fmask(
                 self.real_grid_mask, self.HKL_array)
             zero_hkl_bool = jnp.array(self.dHKL <= dmin_nonzero)
-            self.Fmask_HKL = jnp.where(zero_hkl_bool, jnp.array(0., dtype=jnp.complex64), Fmask_HKL)
+            self.Fmask_HKL = jnp.where(zero_hkl_bool, jnp.array(
+                0., dtype=jnp.complex64), Fmask_HKL)
             if Print:
                 return self.Fmask_HKL
         else:
             Fmask_asu = realmask2Fmask(
                 self.real_grid_mask, self.Hasu_array)
             zero_hkl_bool = jnp.array(self.dHasu <= dmin_nonzero)
-            self.Fmask_asu = jnp.where(zero_hkl_bool, jnp.array(0., dtype=jnp.complex64), Fmask_asu)
+            self.Fmask_asu = jnp.where(zero_hkl_bool, jnp.array(
+                0., dtype=jnp.complex64), Fmask_asu)
             if Print:
                 return self.Fmask_asu
 
@@ -347,13 +362,17 @@ class SFcalculator(object):
 
         if not self.HKL_array is None:
             dr2_tensor = jnp.array(self.dr2HKL_array)
-            scaled_Fmask = ksol * self.Fmask_HKL * jnp.exp(-bsol * dr2_tensor/4.0)
-            self.Ftotal_HKL = kall * DWF_aniso(kaniso[None, ...], self.reciprocal_cell_paras, self.HKL_array)[0] * (self.Fprotein_HKL+scaled_Fmask)
+            scaled_Fmask = ksol * self.Fmask_HKL * \
+                jnp.exp(-bsol * dr2_tensor/4.0)
+            self.Ftotal_HKL = kall * DWF_aniso(kaniso[None, ...], self.reciprocal_cell_paras, self.HKL_array)[
+                0] * (self.Fprotein_HKL+scaled_Fmask)
             return self.Ftotal_HKL
         else:
             dr2_tensor = jnp.array(self.dr2asu_array)
-            scaled_Fmask = ksol * self.Fmask_asu * jnp.exp(-bsol * dr2_tensor/4.0)
-            self.Ftotal_asu = kall * DWF_aniso(kaniso[None, ...], self.reciprocal_cell_paras, self.Hasu_array)[0] * (self.Fprotein_asu+scaled_Fmask)
+            scaled_Fmask = ksol * self.Fmask_asu * \
+                jnp.exp(-bsol * dr2_tensor/4.0)
+            self.Ftotal_asu = kall * DWF_aniso(kaniso[None, ...], self.reciprocal_cell_paras, self.Hasu_array)[
+                0] * (self.Fprotein_asu+scaled_Fmask)
             return self.Ftotal_asu
 
     def Calc_Fprotein_batch(self, atoms_position_batch, NO_Bfactor=False, Print=False, PARTITION=20):
@@ -369,7 +388,8 @@ class SFcalculator(object):
         '''
         # Read and tensor-fy necessary information
         # TODO Test the following line with non-orthogonal unit cell, check if we need a transpose at the transform matrix
-        atom_pos_frac_batch = jnp.tensordot(atoms_position_batch, self.orth2frac_tensor.T, 1)  # [N_batch, N_atoms, N_dim=3]
+        atom_pos_frac_batch = jnp.tensordot(
+            atoms_position_batch, self.orth2frac_tensor.T, 1)  # [N_batch, N_atoms, N_dim=3]
 
         self.Fprotein_asu_batch = F_protein_batch(self.Hasu_array, self.dr2asu_array,
                                                   self.fullsf_tensor,
@@ -381,7 +401,9 @@ class SFcalculator(object):
                                                   PARTITION=PARTITION)  # [N_batch, N_Hasus]
 
         if not self.HKL_array is None:
-            self.Fprotein_HKL_batch = self.Fprotein_asu_batch[:, self.asu2HKL_index] #type: ignore
+            # type: ignore
+            self.Fprotein_HKL_batch = self.Fprotein_asu_batch[:,
+                                                              self.asu2HKL_index]
             if Print:
                 return self.Fprotein_HKL_batch
         else:
@@ -411,7 +433,7 @@ class SFcalculator(object):
             self.space_group, self.Hasu_array, self.Fprotein_asu_batch,
             dmin_mask=dmin_mask, Batch=True, unitcell=self.unit_cell)
 
-        batchsize = self.Fprotein_asu_batch.shape[0] #type: ignore
+        batchsize = self.Fprotein_asu_batch.shape[0]  # type: ignore
         N_partition = batchsize // PARTITION + 1
         Fmask_batch = 0.
 
@@ -429,16 +451,18 @@ class SFcalculator(object):
             rs_grid = reciprocal_grid(
                 Hp1_array, Fp1_tensor_batch[start:end], gridsize, end-start)
             real_grid_mask = rsgrid2realmask(
-                rs_grid, solvent_percent=solventpct, Batch=True) #type: ignore
+                rs_grid, solvent_percent=solventpct, Batch=True)  # type: ignore
             Fmask_batch_j = realmask2Fmask(
                 real_grid_mask, HKL_array, end-start)
             if j == 0:
                 Fmask_batch = Fmask_batch_j
             else:
                 # Shape [N_batches, N_HKLs]
-                Fmask_batch = jnp.concatenate((Fmask_batch, Fmask_batch_j), dim=0) #type: ignore
+                Fmask_batch = jnp.concatenate(
+                    (Fmask_batch, Fmask_batch_j), dim=0)  # type: ignore
         zero_hkl_bool = jnp.array(self.dHKL <= dmin_nonzero)
-        Fmask_batch = jnp.where(zero_hkl_bool, jnp.array(0., dtype=jnp.complex64), Fmask_batch)
+        Fmask_batch = jnp.where(zero_hkl_bool, jnp.array(
+            0., dtype=jnp.complex64), Fmask_batch)
         if not self.HKL_array is None:
             self.Fmask_HKL_batch = Fmask_batch
             if Print:
@@ -461,13 +485,17 @@ class SFcalculator(object):
 
         if not self.HKL_array is None:
             dr2_tensor = jnp.array(self.dr2HKL_array)
-            scaled_Fmask = ksol * self.Fmask_HKL_batch * jnp.exp(-bsol * dr2_tensor/4.0)
-            self.Ftotal_HKL_batch = kall * DWF_aniso(kaniso[None, ...], self.reciprocal_cell_paras, self.HKL_array)[0] * (self.Fprotein_HKL_batch+scaled_Fmask)
+            scaled_Fmask = ksol * self.Fmask_HKL_batch * \
+                jnp.exp(-bsol * dr2_tensor/4.0)
+            self.Ftotal_HKL_batch = kall * DWF_aniso(kaniso[None, ...], self.reciprocal_cell_paras, self.HKL_array)[
+                0] * (self.Fprotein_HKL_batch+scaled_Fmask)
             return self.Ftotal_HKL_batch
         else:
             dr2_tensor = jnp.array(self.dr2asu_array)
-            scaled_Fmask = ksol * self.Fmask_asu_batch * jnp.exp(-bsol * dr2_tensor/4.0)
-            self.Ftotal_asu_batch = kall * DWF_aniso(kaniso[None, ...], self.reciprocal_cell_paras, self.Hasu_array)[0] * (self.Fprotein_asu_batch+scaled_Fmask)
+            scaled_Fmask = ksol * self.Fmask_asu_batch * \
+                jnp.exp(-bsol * dr2_tensor/4.0)
+            self.Ftotal_asu_batch = kall * DWF_aniso(kaniso[None, ...], self.reciprocal_cell_paras, self.Hasu_array)[
+                0] * (self.Fprotein_asu_batch+scaled_Fmask)
             return self.Ftotal_asu_batch
 
     def prepare_DataSet(self, HKL_attr, F_attr):
@@ -478,7 +506,8 @@ class SFcalculator(object):
         F_out_mag = jnp.abs(F_out)
         PI_on_180 = 0.017453292519943295
         F_out_phase = jnp.angle(F_out) / PI_on_180
-        dataset = rs.DataSet(spacegroup=self.space_group, cell=self.unit_cell) #type: ignore
+        dataset = rs.DataSet(spacegroup=self.space_group,
+                             cell=self.unit_cell)  # type: ignore
         dataset["H"] = HKL_out[:, 0]
         dataset["K"] = HKL_out[:, 1]
         dataset["L"] = HKL_out[:, 2]
@@ -515,7 +544,7 @@ def F_protein(HKL_array, dr2_array, fullsf_tensor, reciprocal_cell_paras,
         dwf_aniso = DWF_aniso(atom_b_aniso, reciprocal_cell_paras, HKL_array)
         # Some atoms do not have Anisotropic U
         mask_vec = jnp.all(atom_b_aniso == jnp.array([0.]*6), axis=-1)
-        dwf_all = jnp.where(mask_vec, dwf_iso, dwf_aniso)
+        dwf_all = jnp.where(mask_vec[:, None], dwf_iso, dwf_aniso)
 
         # Apply Atomic Structure Factor and Occupancy for magnitude
         magnitude = dwf_all * fullsf_tensor * \
@@ -523,15 +552,16 @@ def F_protein(HKL_array, dr2_array, fullsf_tensor, reciprocal_cell_paras,
 
     # Vectorized phase calculation
     sym_oped_pos_frac = jnp.transpose(jnp.tensordot(R_G_tensor_stack,
-        atom_pos_frac.T, 1), [2, 0, 1]) + T_G_tensor_stack  # Shape [N_atom, N_op, N_dim=3]
+                                                    atom_pos_frac.T, 1), [2, 0, 1]) + T_G_tensor_stack  # Shape [N_atom, N_op, N_dim=3]
     cos_phase = 0.
     sin_phase = 0.
     # Loop through symmetry operations instead of fully vectorization, to reduce the memory cost
     for i in range(sym_oped_pos_frac.shape[1]):
-        phase_G = 2*np.pi*jnp.tensordot(HKL_tensor,sym_oped_pos_frac[:, i, :].T, 1)
+        phase_G = 2*np.pi * \
+            jnp.tensordot(HKL_tensor, sym_oped_pos_frac[:, i, :].T, 1)
         cos_phase += jnp.cos(phase_G)
         sin_phase += jnp.sin(phase_G)  # Shape [N_HKLs, N_atoms]
-    # Calcualte the complex structural factor 
+    # Calcualte the complex structural factor
     F_calc = jax.lax.complex(jnp.sum(cos_phase*magnitude.T, axis=-1),
                              jnp.sum(sin_phase*magnitude.T, axis=-1))
     return F_calc
@@ -567,14 +597,14 @@ def F_protein_batch(HKL_array, dr2_array, fullsf_tensor, reciprocal_cell_paras,
         dwf_aniso = DWF_aniso(atom_b_aniso, reciprocal_cell_paras, HKL_array)
         # Some atoms do not have Anisotropic U
         mask_vec = jnp.all(atom_b_aniso == jnp.array([0.]*6), axis=-1)
-        dwf_all = jnp.where(mask_vec, dwf_iso, dwf_aniso)
+        dwf_all = jnp.where(mask_vec[:, None], dwf_iso, dwf_aniso)
         # Apply Atomic Structure Factor and Occupancy for magnitude
         magnitude = dwf_all * fullsf_tensor * \
             atom_occ[..., None]  # [N_atoms, N_HKLs]
 
     # Vectorized phase calculation
     sym_oped_pos_frac = jnp.tensordot(atom_pos_frac_batch, jnp.transpose(R_G_tensor_stack, [
-                                     2, 1, 0]), 1) + T_G_tensor_stack.T  # Shape [N_batch, N_atom, N_dim=3, N_ops]
+        2, 1, 0]), 1) + T_G_tensor_stack.T  # Shape [N_batch, N_atom, N_dim=3, N_ops]
     N_ops = R_G_tensor_stack.shape[0]
     N_partition = batchsize // PARTITION + 1
     F_calc = 0.
@@ -585,7 +615,10 @@ def F_protein_batch(HKL_array, dr2_array, fullsf_tensor, reciprocal_cell_paras,
         start = j*PARTITION
         end = min((j+1)*PARTITION, batchsize)
         for i in range(N_ops):  # Loop through symmetry operations to reduce memory cost
-            phase_ij = 2 * jnp.pi * jnp.tensordot(sym_oped_pos_frac[start:end, :, :, i], HKL_tensor.T, 1)  # Shape [PARTITION, N_atoms, N_HKLs]
+            # Shape [PARTITION, N_atoms, N_HKLs]
+            phase_ij = 2 * jnp.pi * \
+                jnp.tensordot(
+                    sym_oped_pos_frac[start:end, :, :, i], HKL_tensor.T, 1)
             Fcalc_ij = jax.lax.complex(jnp.sum(jnp.cos(phase_ij)*magnitude, axis=1),
                                        jnp.sum(jnp.sin(phase_ij)*magnitude, axis=1))  # Shape [PARTITION, N_HKLs], sum over atoms
             # Shape [PARTITION, N_HKLs], sum over symmetry operations
@@ -594,7 +627,5 @@ def F_protein_batch(HKL_array, dr2_array, fullsf_tensor, reciprocal_cell_paras,
             F_calc = Fcalc_j
         else:
             # Shape [N_batches, N_HKLs]
-            F_calc = jnp.concatenate((F_calc, Fcalc_j), dim=0) #type: ignore
+            F_calc = jnp.concatenate((F_calc, Fcalc_j), dim=0)  # type: ignore
     return F_calc
-
-        

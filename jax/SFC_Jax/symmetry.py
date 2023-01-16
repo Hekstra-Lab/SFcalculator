@@ -30,7 +30,88 @@ asu_cases = {
     9: lambda h, k, l: (k >= l) & (l >= h) & (h >= 0),
 }
 
-def expand_to_p1(spacegroup, Hasu_array, Fasu_tensor, dmin_mask=6.0, Batch=False, unitcell=None):
+def get_p1_idx(spacegroup, Hasu_array, dmin_mask=6.0, unitcell=None):
+    '''
+    This function is made to enable the jax.jit compilation. In expand_to_p1, previously we use a boolean 
+    array to get the subset of a device array. This operation is not allowed in jax.jit mode.
+    The solution i come up with is pre-calculating the indices outside the jax.jit box.
+
+    It will expand the asu in reciprocal space into p1 symmetry, then give the indices to only keep the true p1
+    elements. 
+
+    Parameters:
+    -----------
+    spacegroup: gemmi.SpaceGroup
+        A gemmi spacegroup object
+
+    Hasu_array: np.int32 array
+        The HKL list of reciprocal ASU
+
+    dmin_mask: np.float32, Default 6 angstroms.
+        Minimum resolution cutoff, in angstroms, for creating the solvent mask
+
+    unit_cell: gemmi.UnitCell, Default None
+        The object with cell parameters
+
+    Return:
+    -------
+    HKL_p1
+        Expanded miller index in p1 symmetry
+
+    idx_0, idx_1, idx_2
+        Indices to use in the expand_to_p1 function
+    '''
+    groupops = spacegroup.operations()
+    allops = [op for op in groupops]
+
+    if dmin_mask is not None:
+        # expands to p1 with resolution set by dmin_mask, to remove high-frequency noise.
+        dHKL = unitcell.calculate_d_array(
+            Hasu_array).astype("float32")  # type: ignore
+        new_hkl_inds_bool = (dHKL >= dmin_mask)
+        Hasu_array = Hasu_array[new_hkl_inds_bool]
+
+    len_asu = len(Hasu_array)
+
+    ds = pd.DataFrame()
+    ds["H"] = Hasu_array[:, 0]
+    ds["K"] = Hasu_array[:, 1]
+    ds["L"] = Hasu_array[:, 2]
+    ds["index"] = np.arange(len_asu)
+    for i, op in enumerate(allops):
+        if i == 0:
+            continue
+        rot_temp = np.array(op.rot)/op.DEN
+        H_temp = np.matmul(Hasu_array, rot_temp).astype(np.int32)
+        ds_temp = pd.DataFrame()
+        ds_temp["H"] = H_temp[:, 0]
+        ds_temp["K"] = H_temp[:, 1]
+        ds_temp["L"] = H_temp[:, 2]
+        ds_temp["index"] = np.arange(len_asu)+len_asu*i
+        ds = pd.concat([ds, ds_temp])
+
+    # Friedel Pair
+    ds_friedel = ds.copy()
+    ds_friedel["H"] = -ds_friedel["H"]
+    ds_friedel["K"] = -ds_friedel["K"]
+    ds_friedel["L"] = -ds_friedel["L"]
+    ds_friedel["index"] = ds_friedel["index"] + len(ds)
+
+    # Combine
+    ds = pd.concat([ds, ds_friedel])
+    ds = ds.drop_duplicates(subset=["H", "K", "L"])
+
+    HKL_1 = ds[["H", "K", "L"]].values
+    idx_1 = jnp.array(ds["index"].values)
+    in_asu = asu_cases[0]  # p1 symmetry
+    idx_2_bool = in_asu(*HKL_1.T)
+    HKL_p1 = HKL_1[idx_2_bool]
+    idx_2 = jnp.where(jnp.array(idx_2_bool))[0]
+
+    return HKL_p1, idx_1, idx_2
+
+
+def expand_to_p1(spacegroup, Hasu_array, Fasu_tensor, idx_1, idx_2, dmin_mask=6.0, Batch=False, unitcell=None):
     '''
     Expand the reciprocal ASU array to a complete p1 unit cell, with phase shift on the Complex Structure Factor
     In a fully differentiable manner (to Fasu_tensor), with tensorflow
@@ -45,6 +126,9 @@ def expand_to_p1(spacegroup, Hasu_array, Fasu_tensor, dmin_mask=6.0, Batch=False
 
     Fasu_tensor: jnp.complex64 tensor, single model or batched model
         Corresponding structural factor tensor
+    
+    idx_1, idx_2: 
+        Output from get_p1_idx function
 
     Batch: Boolean, Default False
         Use to show if a single or a batch of Fasu_tensor are given. If True, the Fasu_tensor 
@@ -56,8 +140,8 @@ def expand_to_p1(spacegroup, Hasu_array, Fasu_tensor, dmin_mask=6.0, Batch=False
 
     Return:
     -------
-    Hp1_array, Fp1_tensor
-        HKL list in p1 unit cell and corresponding complex structural factor tensor
+    Fp1_tensor
+        Complex structural factor tensorin p1 unit cell
     '''
 
     groupops = spacegroup.operations()
@@ -71,70 +155,45 @@ def expand_to_p1(spacegroup, Hasu_array, Fasu_tensor, dmin_mask=6.0, Batch=False
         # Single model calculation
         assert Fasu_tensor.ndim == 1, "Give single Fasu if you set Batch=False!"
         concat_axis = 0
+    
     if dmin_mask is not None:
         # expands to p1 with resolution set by dmin_mask, to remove high-frequency noise.
-        dHKL = unitcell.calculate_d_array(Hasu_array).astype("float32") # type: ignore
+        dHKL = unitcell.calculate_d_array(
+            Hasu_array).astype("float32")  # type: ignore
         new_hkl_inds_bool = (dHKL >= dmin_mask)
         Hasu_array = Hasu_array[new_hkl_inds_bool]
 
         # removes entries of Fasu_tensor that correspond to resolutions above dmin_mask
         if Batch:
-            Fasu_tensor = Fasu_tensor[:,new_hkl_inds_bool]
-        else: 
+            Fasu_tensor = Fasu_tensor[:, new_hkl_inds_bool]
+        else:
             Fasu_tensor = Fasu_tensor[new_hkl_inds_bool]
 
     Fp1_tensor = Fasu_tensor
-    len_asu = len(Hasu_array)
     Hasu_tensor = jnp.array(Hasu_array).astype(jnp.float32)
-
-    ds = pd.DataFrame()
-    ds["H"] = Hasu_array[:, 0]
-    ds["K"] = Hasu_array[:, 1]
-    ds["L"] = Hasu_array[:, 2]
-    ds["index"] = np.arange(len_asu)
     zero_tensor = jnp.array(0.)
     for i, op in enumerate(allops):
         if i == 0:
             continue
-        rot_temp = np.array(op.rot)/op.DEN
         tran_temp = jnp.array(np.array(op.tran)/op.DEN).astype(jnp.float32)
-        H_temp = np.matmul(Hasu_array, rot_temp).astype(np.int32)
-        ds_temp = pd.DataFrame()
-        ds_temp["H"] = H_temp[:, 0]
-        ds_temp["K"] = H_temp[:, 1]
-        ds_temp["L"] = H_temp[:, 2]
-        ds_temp["index"] = np.arange(len_asu)+len_asu*i
         # exp(-2*pi*j*h*T)
         phaseshift_temp = jnp.exp(jax.lax.complex(
             zero_tensor, -2*np.pi*jnp.tensordot(Hasu_tensor, tran_temp, 1)))
         Fcalc_temp = Fasu_tensor * phaseshift_temp
-        ds = pd.concat([ds, ds_temp])
-        Fp1_tensor = jnp.concatenate((Fp1_tensor, Fcalc_temp), axis=concat_axis)
+        Fp1_tensor = jnp.concatenate(
+            (Fp1_tensor, Fcalc_temp), axis=concat_axis)
 
     # Friedel Pair
-    ds_friedel = ds.copy()
-    ds_friedel["H"] = -ds_friedel["H"]
-    ds_friedel["K"] = -ds_friedel["K"]
-    ds_friedel["L"] = -ds_friedel["L"]
-    ds_friedel["index"] = ds_friedel["index"] + len(ds)
     F_friedel_tensor = jnp.conj(Fp1_tensor)
 
     # Combine
-    ds = pd.concat([ds, ds_friedel])
-    Fp1_tensor = jnp.concatenate((Fp1_tensor, F_friedel_tensor), axis=concat_axis)
+    Fp1_tensor = jnp.concatenate(
+        (Fp1_tensor, F_friedel_tensor), axis=concat_axis)
 
-    ds = ds.drop_duplicates(subset=["H", "K", "L"])
-
-    HKL_1 = ds[["H", "K", "L"]].values
-    idx_1 = jnp.array(ds["index"].values)
     Fp1_tensor = jnp.take_along_axis(Fp1_tensor, idx_1, axis=concat_axis)
-    in_asu = asu_cases[0]  # p1 symmetry
-    idx_2 = in_asu(*HKL_1.T)
-    HKL_2 = HKL_1[idx_2]
-    idx_2i = jnp.where(jnp.array(idx_2))[0]
-    Fp1_tensor = jnp.take_along_axis(Fp1_tensor, idx_2i, axis=concat_axis)
+    Fp1_tensor = jnp.take_along_axis(Fp1_tensor, idx_2, axis=concat_axis)
 
-    return HKL_2, Fp1_tensor
+    return Fp1_tensor
 
 
 def generate_reciprocal_asu(cell, spacegroup, dmin, anomalous=False):
@@ -161,11 +220,12 @@ def generate_reciprocal_asu(cell, spacegroup, dmin, anomalous=False):
     """
     p1_hkl = generate_reciprocal_cell(cell, dmin)
     # Remove absences
-    hkl = p1_hkl[~rs.utils.is_absent(p1_hkl, spacegroup)] #type: ignore
+    hkl = p1_hkl[~rs.utils.is_absent(p1_hkl, spacegroup)]  # type: ignore
     # Map to ASU
-    hasu = hkl[rs.utils.in_asu(hkl, spacegroup)] #type: ignore
+    hasu = hkl[rs.utils.in_asu(hkl, spacegroup)]  # type: ignore
     if anomalous:
-        hasu_minus = -hasu[~rs.utils.is_centric(hasu, spacegroup)] #type: ignore
+        # type: ignore
+        hasu_minus = -hasu[~rs.utils.is_centric(hasu, spacegroup)]
         return np.unique(np.concatenate([hasu, hasu_minus]), axis=0)
     return np.unique(hasu, axis=0)
 
@@ -204,7 +264,7 @@ def generate_reciprocal_cell(cell, dmin, dtype=np.int32):
 
 
 def asu2p1_jax(atom_pos_orth, unitcell, spacegroup,
-              incell=True, fractional=True):
+               incell=True, fractional=True):
     '''
     Apply symmetry operations to real space asu model coordinates
 
@@ -212,7 +272,7 @@ def asu2p1_jax(atom_pos_orth, unitcell, spacegroup,
     ----------
     atom_pos_orth: tensor, [N_atom, 3]
         ASU model ccordinates
-    
+
     unitcell: gemmi.UnitCell
 
     spacegroup: gemmi.SpaceGroup
@@ -231,17 +291,18 @@ def asu2p1_jax(atom_pos_orth, unitcell, spacegroup,
     frac2orth_tensor = jnp.array(unitcell.orthogonalization_matrix.tolist())
     operations = spacegroup.operations()  # gemmi.GroupOps object
     R_G_tensor_stack = jnp.array(np.array([
-            np.array(sym_op.rot)/sym_op.DEN for sym_op in operations])).astype(jnp.float32)
+        np.array(sym_op.rot)/sym_op.DEN for sym_op in operations])).astype(jnp.float32)
     T_G_tensor_stack = jnp.array(np.array([
-            np.array(sym_op.tran)/sym_op.DEN for sym_op in operations])).astype(jnp.float32)
+        np.array(sym_op.tran)/sym_op.DEN for sym_op in operations])).astype(jnp.float32)
     atom_pos_frac = jnp.tensordot(atom_pos_orth, orth2frac_tensor.T, 1)
     sym_oped_pos_frac = jnp.transpose(jnp.tensordot(R_G_tensor_stack,
-        atom_pos_frac.T, 1), [2, 0, 1]) + T_G_tensor_stack
+                                                    atom_pos_frac.T, 1), [2, 0, 1]) + T_G_tensor_stack
     if incell:
         sym_oped_pos_frac = sym_oped_pos_frac - \
             jnp.floor(sym_oped_pos_frac)
     if fractional:
         return sym_oped_pos_frac
     else:
-        sym_oped_pos_orth = jnp.tensordot(sym_oped_pos_frac, frac2orth_tensor.T, 1)
+        sym_oped_pos_orth = jnp.tensordot(
+            sym_oped_pos_frac, frac2orth_tensor.T, 1)
         return sym_oped_pos_orth
