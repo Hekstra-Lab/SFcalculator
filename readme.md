@@ -26,30 +26,15 @@ Doeke R. Hekstra, doeke_hekstra@harvard.edu
 
 ### Installation
 
-#### Tensorflow 2 verision
-
-1. Create a python environment with package manager you like ([mambaforge](https://github.com/mamba-org/mamba) recommended).
-
-2. Install [Tensorflow2](https://www.tensorflow.org/install)
-
-3. Clone this repository, then
-    ```bash
-    cd tensorflow2
-
-    pip install .
-    ```
-
 #### Pytorch verision
 
 1. Create a python environment with package manager you like ([mambaforge](https://github.com/mamba-org/mamba) recommended).
 
 2. Install [Pytorch](https://pytorch.org/get-started/locally/)
 
-3. Clone this repository, then
+3. Install `SFcalculator-torch`
     ```bash
-    cd pytorch
-
-    pip install .
+    pip install SFcalculator-torch
     ```
 
 #### Jax verision
@@ -58,9 +43,19 @@ Doeke R. Hekstra, doeke_hekstra@harvard.edu
 
 2. Install [Jax](https://github.com/google/jax#installation)
 
-3. Clone this repository, then
+3. Install `SFcalculator-jax` 
     ```bash
-    cd jax
-
-    pip install .
+    pip install SFcalculator-jax
     ```
+#### Tensorflow 2 verision
+
+1. Create a python environment with package manager you like ([mambaforge](https://github.com/mamba-org/mamba) recommended).
+
+2. Install [Tensorflow2](https://www.tensorflow.org/install)
+
+3. Install `SFcalculator-tf`:
+    ```bash
+    pip install SFcalculator-tf
+    ```
+
+
