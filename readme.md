@@ -2,13 +2,21 @@
 
 This is the code repo related to paper [Towards automated crystallographic structure refinement with a differentiable pipeline](https://www.mlsb.io/papers_2022/Towards_automated_crystallographic_structure_refinement_with_a_differentiable_pipeline.pdf) on [Machine Learning in Structural Biology Workshop](https://www.mlsb.io/) at NeurIPS 2022.
 
-Structure Factor Calculator implemented in `tensorflow2`, `pytorch` and `jax`. 
+Structure Factor Calculator implemented in `tensorflow2`, `pytorch` and `jax`.
 
 A differentiable pipeline connecting the protein atomic models and experimental structure factors, featuring a differentiable bulk solvent correction.
 
 The symmetry-related nitty-gritty in both real space and reciprocal space are included.
 
-Provided in three popular deep learning frameworks.
+### Source codes
+
+Source codes in three popular deep learning frameworks are provided in the following submodule repositories:
+
+1. [`SFcalculator_torch`](https://github.com/Hekstra-Lab/SFcalculator_torch), pytorch implementation.  
+
+2. [`SFcalculator_jax`](https://github.com/Hekstra-Lab/SFcalculator_jax), jax implementation.  
+
+3. [`SFcalculator_tf`](https://github.com/Hekstra-Lab/SFcalculator_tf), tensorflow2 implementation.  
 
 ### Authors
 
