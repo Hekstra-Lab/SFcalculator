@@ -1,4 +1,4 @@
-## SFcalculator
+## SFCalculator
 
 This is the code repo related to manuscript [SFCalculator: connecting deep generative models and crystallography](https://www.biorxiv.org/content/10.1101/2025.01.12.632630v2)
 
