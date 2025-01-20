@@ -1,14 +1,14 @@
 ## SFcalculator
 
-This is the code repo related to short paper [Towards automated crystallographic structure refinement with a differentiable pipeline](https://www.mlsb.io/papers_2022/Towards_automated_crystallographic_structure_refinement_with_a_differentiable_pipeline.pdf) on [Machine Learning in Structural Biology Workshop](https://www.mlsb.io/) at NeurIPS 2022.
+This is the code repo related to manuscript [SFCalculator: connecting deep generative models and crystallography](https://www.biorxiv.org/content/10.1101/2025.01.12.632630v2)
+
+A short version has been presented as [Towards automated crystallographic structure refinement with a differentiable pipeline](https://www.mlsb.io/papers_2022/Towards_automated_crystallographic_structure_refinement_with_a_differentiable_pipeline.pdf) on [Machine Learning in Structural Biology Workshop](https://www.mlsb.io/) at NeurIPS 2022.
 
 Structure Factor Calculator implemented in `tensorflow2`, `pytorch` and `jax`.
 
 A differentiable pipeline connecting the protein atomic models and experimental structure factors, featuring a differentiable bulk solvent correction.
 
 The symmetry-related nitty-gritty in both real space and reciprocal space are included.
-
-A more detailed manuscript is in preparation.
 
 ### Source codes
 
@@ -62,4 +62,16 @@ Doeke R. Hekstra, doeke_hekstra@harvard.edu
     pip install SFcalculator-tf
     ```
 
+### Citing
+
+```
+@article{li2025sfcalculator,
+  title={SFCalculator: connecting deep generative models and crystallography},
+  author={Li, Minhuan and Dalton, Kevin M and Hekstra, Doeke Romke},
+  journal={bioRxiv},
+  pages={2025--01},
+  year={2025},
+  publisher={Cold Spring Harbor Laboratory}
+}
+```
 
