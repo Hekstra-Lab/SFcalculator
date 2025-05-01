@@ -28,7 +28,7 @@ Doeke R. Hekstra, doeke_hekstra@harvard.edu
 
 ### Installation
 
-#### Pytorch verision
+#### Pytorch version
 
 1. Create a python environment with package manager you like ([mambaforge](https://github.com/mamba-org/mamba) recommended).
 
@@ -39,7 +39,7 @@ Doeke R. Hekstra, doeke_hekstra@harvard.edu
     pip install SFcalculator-torch
     ```
 
-#### Jax verision
+#### Jax version
 
 1. Create a python environment with package manager you like ([mambaforge](https://github.com/mamba-org/mamba) recommended).
 
@@ -49,7 +49,7 @@ Doeke R. Hekstra, doeke_hekstra@harvard.edu
     ```bash
     pip install SFcalculator-jax
     ```
-#### Tensorflow 2 verision
+#### Tensorflow 2 version
 
 1. Create a python environment with package manager you like ([mambaforge](https://github.com/mamba-org/mamba) recommended).
 
@@ -60,7 +60,7 @@ Doeke R. Hekstra, doeke_hekstra@harvard.edu
     pip install SFcalculator-tf
     ```
 
-### Citing
+### Citation
 
 ```
 @article{li2025sfcalculator,
