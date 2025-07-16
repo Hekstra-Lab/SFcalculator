@@ -18,11 +18,12 @@ Source codes in three popular deep learning frameworks are provided in the follo
 
 3. [`SFcalculator_tf`](https://github.com/Hekstra-Lab/SFcalculator_tf), tensorflow2 implementation.
 
-The pytorch version is currently in active development, making it several versions ahead and the preferred choice.
+> [!NOTE]
+> The pytorch version is currently in active development, making it several versions ahead and the preferred choice.
 
 ### Authors
 
-Minhuan Li, minhuanli@g.harvard.edu
+Minhuan Li, minhuanli@flatironinstitute.org
 
 Doeke R. Hekstra, doeke_hekstra@harvard.edu
 
@@ -59,6 +60,10 @@ Doeke R. Hekstra, doeke_hekstra@harvard.edu
     ```bash
     pip install SFcalculator-tf
     ```
+
+### Tutorial
+
+Here is a walkthrough tutorial page for PyTorch version: https://hekstra-lab.github.io/SFcalculator_torch/
 
 ### Citation
 
